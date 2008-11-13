@@ -8,7 +8,7 @@ use warnings;
 use FindBin '$Bin';
 use lib "$Bin/../../lib";
 
-use Test::More tests => 4;
+use Test::More tests => 5;
 
 # My ears are burning.
 # I wasn't talking about you, Dad.
@@ -21,3 +21,6 @@ my $output = Mojo::Server::CGI->new->run;
 like($output, qr{Content-Type: text/plain}, "expected Content-type");
 like($output, qr{Status: 200 OK}, "expected Status");
 like($output, qr{Congratulations, your Mojo is working!}, "expected body");
+
+my $output = Mojo::Server::CGI->new( nph => 1 )->run;
+like($output, qr{HTTP/1.1 200 OK}, "nph => 1 returns HTTP start line");
