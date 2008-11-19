@@ -183,4 +183,9 @@ L<Mojo::Server::Daemon::Prefork> - Preforking standalone HTTP server.
 
 L<Mojo::Server::FastCGI> - A FastCGI server.
 
+=head1 OTHER SERVERS
+
+L<Apache2::Mojo> - A mod_perl2 handler for Mojo, using the Apache2 request objects.
+
+
 =cut
