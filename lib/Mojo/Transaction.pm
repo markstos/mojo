@@ -151,12 +151,17 @@ Returns the invocant if called with arguments.
 L<Mojo::Transaction> inherits all methods from L<Mojo::Stateful> and
 implements the following new ones.
 
+All the following C<< new_* >> methods are used to build up the internal C<<
+request >> object. Provide a URI followed by a hash or hashref of HTTP headers.
+A relative URI can be used if L<Mojo::Client> passes the request directly to an
+application with it's C<< process_local() >> method.
+
 =head2 C<new_delete>
 
     my $tx = Mojo::Transaction->new_delete('http://127.0.0.1',
         User-Agent => 'Mojo'
     );
-    my $tx = Mojo::Transaction->new_delete('http://127.0.0.1', {
+    my $tx = Mojo::Transaction->new_delete('/hello.txt', {
         User-Agent => 'Mojo'
     });
 
@@ -165,7 +170,7 @@ implements the following new ones.
     my $tx = Mojo::Transaction->new_get('http://127.0.0.1',
         User-Agent => 'Mojo'
     );
-    my $tx = Mojo::Transaction->new_get('http://127.0.0.1', {
+    my $tx = Mojo::Transaction->new_get('/hello.txt', {
         User-Agent => 'Mojo'
     });
 
@@ -174,7 +179,7 @@ implements the following new ones.
     my $tx = Mojo::Transaction->new_head('http://127.0.0.1',
         User-Agent => 'Mojo'
     );
-    my $tx = Mojo::Transaction->new_head('http://127.0.0.1', {
+    my $tx = Mojo::Transaction->new_head('/hello.txt', {
         User-Agent => 'Mojo'
     });
 
@@ -183,7 +188,7 @@ implements the following new ones.
     my $tx = Mojo::Transaction->new_post('http://127.0.0.1',
         User-Agent => 'Mojo'
     );
-    my $tx = Mojo::Transaction->new_post('http://127.0.0.1', {
+    my $tx = Mojo::Transaction->new_post('/foo.cgi', {
         User-Agent => 'Mojo'
     });
 
@@ -192,7 +197,7 @@ implements the following new ones.
     my $tx = Mojo::Transaction->new_put('http://127.0.0.1',
         User-Agent => 'Mojo'
     );
-    my $tx = Mojo::Transaction->new_put('http://127.0.0.1', {
+    my $tx = Mojo::Transaction->new_put('/hello.txt', {
         User-Agent => 'Mojo'
     });
 
