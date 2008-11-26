@@ -43,17 +43,8 @@ __PACKAGE__->attr(
 # These are the three demons you must slay if you wish to succeed in
 # business.
 sub at_least_version {
-    my ($self, $version) = @_;
-    my ($major, $minor) = split /\./, $version;
-
-    # Version is equal or newer
-    return 1 if $major > $self->major_version;
-    if ($major == $self->major_version) {
-        return 1 if $minor <= $self->minor_version;
-    }
-
-    # Version is older
-    return 0;
+    my ($self, $test_version) = @_;
+    return 1 if $self->version >= $test_version;
 }
 
 sub body {
