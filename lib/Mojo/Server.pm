@@ -185,7 +185,8 @@ L<Mojo::Server::FastCGI> - A FastCGI server.
 
 =head1 OTHER SERVERS
 
-L<Apache2::Mojo> - A mod_perl2 handler for Mojo, using the Apache2 request objects.
+L<Apache::Mojo> - A mod_perl handler for Mojo, using the Apache request object.
 
+L<Apache2::Mojo> - A mod_perl2 handler for Mojo, using the Apache2 request object.
 
 =cut
