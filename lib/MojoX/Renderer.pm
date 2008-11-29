@@ -50,11 +50,12 @@ sub render {
         $template =~ /\.(\w+)$/;
         $ext = $1;
 
+        return undef unless $ext || $format;
+
         # Path
         my $path = File::Spec->catfile($self->root, $template);
         $c->stash->{template_path} ||= $path;
 
-        return undef unless $ext || $format;
     }
 
     $format ||= $ext;
@@ -91,7 +92,7 @@ __END__
 
 =head1 NAME
 
-MojoX::Renderer - Renderer
+MojoX::Renderer - Render Templates
 
 =head1 SYNOPSIS
 
@@ -99,9 +100,11 @@ MojoX::Renderer - Renderer
 
     my $renderer = MojoX::Renderer->new;
 
+    $renderer->render;
+
 =head1 DESCRIPTION
 
-L<MojoX::Renderer> is a MIME type based renderer.
+L<MojoX::Renderer> is a MIME-type based template renderer.
 
 =head2 ATTRIBUTES
 
@@ -110,32 +113,65 @@ L<MojoX::Renderer> is a MIME type based renderer.
     my $ext   = $renderer->default_handler;
     $renderer = $renderer->default_handler('phtml');
 
+Returns the file extension of the default handler for rendering.
+Returns the invocant if called with arguments.
+Expects a file extension. 
+
 =head2 C<handler>
 
     my $handler = $renderer->handler;
     $renderer   = $renderer->handler({phtml => sub { ... }});
+
+Returns a hashref of handlers. Keys are file extensions and values are coderefs 
+to render templates for that extension. See L<render> for more about the coderefs.
+Returns the invocant if called with arguments.
+Expects a hashref of handlers.
 
 =head2 C<types>
 
     my $types = $renderer->types;
     $renderer = $renderer->types(MojoX::Types->new);
 
+Returns a L<MojoX::Types> (or compatible) object.
+Returns the invocant if called with arguments.
+Expects a L<MojoX::Types> or compatible object. 
+
 =head2 C<root>
 
    my $root  = $renderer->root;
    $renderer = $renderer->root('/foo/bar/templates');
 
+Return the root file system path where templates are stored.
+Returns the invocant if called with arguments. 
+Expects a file system path.
+
 =head1 METHODS
 
 L<MojoX::Types> inherits all methods from L<Mojo::Base> and implements the
-follwing the ones.
+following the ones.
 
 =head2 C<add_handler>
 
     $renderer = $renderer->add_handler(phtml => sub { ... });
 
+Returns the invocant.
+Expects a file extension and rendering coderef. See L<render> for details
+of the coderef to supply. 
+
 =head2 C<render>
 
-    $renderer = $renderer->render($c);
+    $success  = $renderer->render($c);
+
+    $c->stash->{partial} = 1;
+    $output = $renderer->render($c); 
+
+Returns success if a template is successfully rendered. 
+Returns the template output if C<partial> is set in the stash.
+Returns C<undef> if neither C<format> or C<template> are set in the
+stash.
+Returns C<undef> if C<template>
+Expects a L<Mojo::Context> object. 
+
+
 
 =cut
