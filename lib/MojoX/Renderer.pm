@@ -11,7 +11,7 @@ use Carp qw/carp croak/;
 use File::Spec;
 use MojoX::Types;
 
-__PACKAGE__->attr(default_handler => (chained => 1));
+__PACKAGE__->attr(default_format => (chained => 1));
 __PACKAGE__->attr(handler => (chained => 1, default => sub { {} }));
 __PACKAGE__->attr(
     types => (
@@ -43,7 +43,7 @@ sub render {
     return undef unless $format || $template;
 
     # Template extension
-    my $default = $self->default_handler;
+    my $default = $self->default_format;
     my $ext;
     if ($template) {
         $template .= ".$default" if $default && $template !~ /\.\w+$/;
@@ -109,10 +109,10 @@ L<MojoX::Renderer> is a MIME-type based template renderer.
 
 =head2 ATTRIBUTES
 
-=head2 C<default_handler>
+=head2 C<default_format>
 
-    my $ext   = $renderer->default_handler;
-    $renderer = $renderer->default_handler('phtml');
+    my $format = $renderer->default_format;
+    $renderer  = $renderer->default_format('phtml');
 
 Returns the file extension of the default handler for rendering.
 Returns the invocant if called with arguments.
