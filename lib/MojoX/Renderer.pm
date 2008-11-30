@@ -37,41 +37,49 @@ sub add_handler {
 sub render {
     my ($self, $c) = @_;
 
-    my $format   = $c->stash->{format};
-    my $template = $c->stash->{template};
+    my $format        = $c->stash->{format};
+    my $template      = $c->stash->{template};
+    my $template_path = $c->stash->{template_path};
 
-    return undef unless $format || $template;
+    return undef unless $format || $template || $template_path;
 
     # Template extension
-    my $default = $self->default_format;
-    my $ext;
-    if ($template) {
-        $template .= ".$default" if $default && $template !~ /\.\w+$/;
+    my $default_format = $self->default_format;
 
-        # Path
-        my $path = File::Spec->catfile($self->root, $template);
-        $c->stash->{template_path} ||= $path;
+    # A template_path should be complete, including the extension.
+    if ($template_path) {
 
-        # Extension
-        $c->stash->{template_path} =~ /\.(\w+)$/;
-        $ext = $1;
-
-        return undef unless $ext || $format;
+        # nothing more to do
     }
 
-    $format ||= $ext;
-    my $handler = $self->handler->{$format};
+    # If we have a template, build the template_path
+    elsif ($template) {
+        $template .= ".$default_format"
+          if $default_format && $template !~ /\.\w+$/;
+        my $path = File::Spec->catfile($self->root, $template);
+        $c->stash->{template_path} = $path;
+    }
+
+  # Only calculate the format from the extension if one has not been provided.
+    unless ($format) {
+        $c->stash->{template_path} =~ /\.(\w+)$/;
+        $format = $1;
+    }
+
+    return undef unless $format;
+
+    my $handler_coderef = $self->handler->{$format};
 
     # Fallback
-    unless ($handler) {
+    unless ($handler_coderef) {
         carp qq/No handler for "$format" configured/;
-        $handler = $self->handler->{$default};
-        croak 'Need a valid handler for rendering' unless $handler;
+        $handler_coderef = $self->handler->{$default_format};
+        croak 'Need a valid handler for rendering' unless $handler_coderef;
     }
 
     # Render
     my $output;
-    return undef unless $handler->($self, $c, \$output);
+    return undef unless $handler_coderef->($self, $c, \$output);
 
     # Partial
     return $output if $c->stash->{partial};
@@ -116,14 +124,14 @@ L<MojoX::Renderer> is a MIME-type based template renderer.
 
 Returns the file extension of the default handler for rendering.
 Returns the invocant if called with arguments.
-Expects a file extension. 
+Expects a file extension.
 
 =head2 C<handler>
 
     my $handler = $renderer->handler;
     $renderer   = $renderer->handler({phtml => sub { ... }});
 
-Returns a hashref of handlers. Keys are file extensions and values are coderefs 
+Returns a hashref of handlers. Keys are file extensions and values are coderefs
 to render templates for that extension. See L<render> for more about the coderefs.
 Returns the invocant if called with arguments.
 Expects a hashref of handlers.
@@ -135,7 +143,7 @@ Expects a hashref of handlers.
 
 Returns a L<MojoX::Types> (or compatible) object.
 Returns the invocant if called with arguments.
-Expects a L<MojoX::Types> or compatible object. 
+Expects a L<MojoX::Types> or compatible object.
 
 =head2 C<root>
 
@@ -143,7 +151,7 @@ Expects a L<MojoX::Types> or compatible object.
    $renderer = $renderer->root('/foo/bar/templates');
 
 Return the root file system path where templates are stored.
-Returns the invocant if called with arguments. 
+Returns the invocant if called with arguments.
 Expects a file system path.
 
 =head1 METHODS
@@ -157,22 +165,53 @@ following the ones.
 
 Returns the invocant.
 Expects a file extension and rendering coderef. See L<render> for details
-of the coderef to supply. 
+of the coderef to supply.
 
 =head2 C<render>
 
     $success  = $renderer->render($c);
 
     $c->stash->{partial} = 1;
-    $output = $renderer->render($c); 
+    $output = $renderer->render($c);
 
-Returns success if a template is successfully rendered. 
-Returns the template output if C<partial> is set in the stash.
-Returns C<undef> if neither C<format> or C<template> are set in the
+Returns a true value  if a template is successfully rendered.
+Returns the template output if C<< partial >> is set in the stash.
+Returns C<undef> if none of C<format>, C<template>, or C<template_path> are set in the
 stash.
-Returns C<undef> if C<template>
-Expects a L<Mojo::Context> object. 
+Returns C<undef> if the C<template> is defined, but lacks an extension
+and no default handler is defined.
+Returns C<undef> if the handler returns a false value.
+Expects a L<Mojo::Context> object.
 
+To determine the format to use, we first check C<< $c->stash->{format} >>, and
+if that is empty, we check the extension on C<< $c->stash->{template_path} >>
+and then C<< $c->stash->{template} >>.
 
+C<< $c->stash->{format} >> may contain a value like 'html'.
+C<< $c->stash->{template_path} >> may contain a full filesystem path like  '/templates/page.html'.
+C<< $c->stash->{template} >> may contain a template file name like 'page.html'.
+
+If C<< $c->stash->{template_path} >> is not set, we create it by appending
+C<< $c->stash->{template} >> to the C<< root >> attribute.
+
+If C<< $c->stash->{template} >> lacks an extension, we add one, using the value
+of the C<< default_format >> attribute.
+
+If C<< $c->stash->{format} >> is not defined, we try to determine it from the
+extension on C<< $c->stash->{template_path} >>.
+
+If no handler is found for the C<< format >>, we emit a warning, and check for
+a handler for the C<< default_format >>.
+
+The handler receives three arguments: the renderer object, the L<Mojo::Context>
+object, and a reference an empty scalar, where the output can be accumulated.
+
+If C<< $c->stash->{partial} >> is defined, the output from the handler is
+simply returned.
+
+Otherwise, we build out or own L<Mojo::Message::Response> and return one for
+success. We'll default to a 200 response code if none is provided, and default
+to 'text/plain' if there is no type associated with this format via the C<<
+types >> attribute.
 
 =cut
