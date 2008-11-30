@@ -47,15 +47,16 @@ sub render {
     my $ext;
     if ($template) {
         $template .= ".$default" if $default && $template !~ /\.\w+$/;
-        $template =~ /\.(\w+)$/;
-        $ext = $1;
-
-        return undef unless $ext || $format;
 
         # Path
         my $path = File::Spec->catfile($self->root, $template);
         $c->stash->{template_path} ||= $path;
 
+        # Extension
+        $c->stash->{template_path} =~ /\.(\w+)$/;
+        $ext = $1;
+
+        return undef unless $ext || $format;
     }
 
     $format ||= $ext;
