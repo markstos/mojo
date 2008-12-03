@@ -146,7 +146,7 @@ sub dispatch {
     $self->routes->dispatch($c) unless $done;
 
     # Nothing found, serve static file "/errdocs/404.html"
-    $self->static->serve_404 unless $c->res->code;
+    $self->static->serve_404($c->tx) unless $c->res->code;
 }
 
 # This method will run once at server start
