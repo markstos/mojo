@@ -97,6 +97,65 @@ sub serve {
     return 0;
 }
 
+sub serve_404 {
+    my ($self, $tx, $path) = @_;
+
+    $path ||= File::Spec->catfile('errdocs', '404.html');
+
+    # Append path to root
+    my $abs_path = File::Spec->catfile($self->root, $path);
+
+    my $res = $tx->res;
+
+    # No matter what, it's going to be a 404!
+    $res->code(404);
+
+    # Dispatch
+    if (-f $abs_path) {
+
+       # Best possible case: We find the  404 file to serve and it's readable.
+        if (-r $abs_path) {
+            my $req  = $tx->req;
+            my $stat = stat($abs_path);
+
+            $res->content(Mojo::Content->new(file => Mojo::File->new));
+
+            # Extension
+            $path =~ /\.(\w+)$/;
+            my $ext = $1;
+
+            # Type
+            my $type = $self->types->type($ext) || 'text/plain';
+
+            $res->headers->content_type($type);
+            $res->content->file->path($abs_path);
+        }
+
+        # Exists, but is forbidden
+        else {
+            $res->body(
+                '<!doctype html>
+                        <head><title>404 - Document not found.</title></head>
+                        <body><h2>404 - Document not found.</h2>
+                               <p>Additionally, the 404 file was not readable.</p>
+                        </body></html>'
+            );
+        }
+    }
+    else {
+        $res->body(
+            '<!doctype html>
+                        <head><title>404 - Document not found.</title></head>
+                        <body><h2>404 - Document not found.</h2>
+                                <p>Additionally, the 404 file was not found. </p>
+                        </body></html>'
+        );
+    }
+
+    # Always succeed at serving a 404
+    return 1;
+}
+
 1;
 __END__
 
@@ -173,5 +232,22 @@ Expects a L<Mojo::Transaction> object and a path as arguments.
 If no type can be determined, C<text/plain> will be used.
 A C<Last-Modified> header will always be set according to the last modified
 time of the file.
+
+=head2 C<serve_404>
+
+    $dispatcher->serve_404($tx);
+
+    # Same
+    $dispatcher->serve_404($tx, '/errdocs/404.html');
+
+Returns true after serving a 404 response.  Expects a L<Mojo::Transaction>
+object and a path as arguments.  A default path of '/errdocs/404.html' will be
+used if no path is provided.
+
+When serving a regular file, it's possible that special codes may set 
+if the file is forbidden or cached. When C<serve_404> is called, you can 
+be assured that the 404 code is always set. If for some reason the 404 file
+provided can't be read or is missing, A generic internal 404 page will be  
+returned instead. 
 
 =cut
