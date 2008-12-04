@@ -108,9 +108,8 @@ sub serve {
     return 0;
 }
 
-sub serve_404 { shift->serve_error(shift, 404) }
-
-sub serve_500 { shift->serve_error(shift, 500) }
+sub serve_404 { shift->serve_error(shift, 404, shift) }
+sub serve_500 { shift->serve_error(shift, 500, shift) }
 
 sub serve_error {
     my ($self, $c, $code, $path) = @_;
@@ -265,16 +264,30 @@ time of the file.
 =head2 C<serve_404>
 
     my $success = $dispatcher->serve_404($c);
-    my $success = $dispatcher->serve_404($c, '404.html');
+    my $success = $dispatcher->serve_404($c, 'my_404.html');
+
+A shortcut for L<serve_error> when serving a 404.
 
 =head2 C<serve_500>
 
     my $success = $dispatcher->serve_500($c);
-    my $success = $dispatcher->serve_500($c, '500.html');
+    my $success = $dispatcher->serve_500($c, 'my_500.html');
+
+A shortcut for L<serve_error> when serving a 404.
 
 =head2 C<serve_error>
 
     my $success = $dispatcher->serve_error($c, 404);
     my $success = $dispatcher->serve_error($c, 404, '404.html');
+
+Returns true after serving an error page.  Expects a L<Mojo::Context> object,
+an HTTP error code and an optional path as arguments.  A default path of
+'$err_code.html' will be used if no path is provided.
+
+When serving a regular file, it's possible that special codes may set if the
+file is forbidden or cached. When C<serve_error> is called, you can be assured
+that the requested error code is always set. If for some reason the error file
+provided can't be read or is missing, A generic internal page will be returned
+instead.
 
 =cut
