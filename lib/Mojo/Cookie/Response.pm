@@ -122,8 +122,13 @@ implements the following new ones.
 
     my @cookies = $cookie->parse('f=b; Version=1; Path=/');
 
+Returns an array of L<Mojo::Cookie::Response> objects.
+Expects a cookie string.
+
 =head2 C<to_string>
 
     my $string = $cookie->to_string;
+
+Returns the cookie as a string, ready to be sent to the browser.
 
 =cut
