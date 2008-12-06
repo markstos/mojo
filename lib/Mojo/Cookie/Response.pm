@@ -120,9 +120,9 @@ implements the following new ones.
 
 =head2 C<parse>
 
-    my @cookies = $cookie->parse('f=b; Version=1; Path=/');
+    my $cookies = $cookie->parse('f=b; Version=1; Path=/');
 
-Returns an array of L<Mojo::Cookie::Response> objects.
+Returns an arrayref of L<Mojo::Cookie::Response> objects.
 Expects a cookie string.
 
 =head2 C<to_string>
