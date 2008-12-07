@@ -286,6 +286,49 @@ L<Mojo::Headers> is a container and parser for HTTP headers.
 L<Mojo::Headers> inherits all attributes from L<Mojo::Stateful> and
 implements the following new ones.
 
+=head2 C<buffer>
+
+    my $buffer = $headers->buffer;
+    $headers   = $headers->buffer(Mojo::Buffer->new);
+
+=head1 METHODS
+
+L<Mojo::Headers> inherits all methods from L<Mojo::Stateful> and implements
+the following new ones.
+
+=head2 C<add_line>
+
+    $headers = $headers->add_line('Content-Type', 'text/plain');
+
+Returns the invocant.
+Appends a new line to the header.
+
+=head2 C<to_string>
+
+=head2 C<build>
+
+    my $string = $headers->build;
+    my $string = $headers->to_string;
+    my $string = "$headers";
+
+=head2 C<header>
+
+    my $string = $headers->header('Content-Type');
+    my @lines  = $headers->header('Content-Type');
+    $headers   = $headers->header('Content-Type', 'text/plain');
+
+=head2 C<names>
+
+    my $names = $headers->names;
+
+=head2 C<parse>
+
+    my $success = $headers->parse("Content-Type: text/foo\n\n");
+
+=head2 C<remove>
+
+    $headers = $headers->remove('Content-Type');
+
 =head2 C<connection>
 
     my $connection = $headers->connection;
@@ -361,42 +404,5 @@ implements the following new ones.
     my $user_agent = $headers->user_agent;
     $headers       = $headers->user_agent('Mojo/1.0');
 
-=head1 METHODS
-
-L<Mojo::Headers> inherits all methods from L<Mojo::Stateful> and implements
-the following new ones.
-
-=head2 C<add_line>
-
-    $headers = $headers->add_line('Content-Type', 'text/plain');
-
-Returns the invocant.
-Appends a new line to the header.
-
-=head2 C<to_string>
-
-=head2 C<build>
-
-    my $string = $headers->build;
-    my $string = $headers->to_string;
-    my $string = "$headers";
-
-=head2 C<header>
-
-    my $string = $headers->header('Content-Type');
-    my @lines  = $headers->header('Content-Type');
-    $headers   = $headers->header('Content-Type', 'text/plain');
-
-=head2 C<names>
-
-    my $names = $headers->names;
-
-=head2 C<parse>
-
-    my $success = $headers->parse("Content-Type: text/foo\n\n");
-
-=head2 C<remove>
-
-    $headers = $headers->remove('Content-Type');
 
 =cut
