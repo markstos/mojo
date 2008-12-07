@@ -339,6 +339,9 @@ the following new ones.
 
     $stream = $stream->quote;
 
+Returns the invocant after quoting the the stream.  Any existing double quotes
+are escaped with backslash, and the stream is surrounded with double quotes.
+
 =head2 C<to_string>
 
     my $string = $stream->to_string;
@@ -346,6 +349,9 @@ the following new ones.
 =head2 C<unquote>
 
     $stream = $stream->unquote;
+
+Returns the invocant after unquoting the stream. Surrounding  double quotes are
+removed and an any interior double quotes are unescaped.
 
 =head2 C<url_escape>
 
