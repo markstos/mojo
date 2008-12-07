@@ -314,7 +314,12 @@ implements the following new ones.
 =head2 C<cookies>
 
     my $cookies = $req->cookies;
-    $req        = $req->cookies(Mojo::Cookie::Request->new);
+    $req        = $req->cookies( Mojo::Cookie::Request->new, Mojo::Cookie::Request->new );
+
+Returns an arrayref of L<Mojo::Cookie::Request> objects.
+Returns the invocant when called with arguments.
+Expects an array of L<Mojo::Cookie::Request> objects. The existing cookie header is replaced
+with a new one to set the requested cookies.
 
 =head2 C<fix_headers>
 
