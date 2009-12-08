@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package Mojo::ByteStream;
 
@@ -16,6 +16,269 @@ require Encode;
 require MIME::Base64;
 require MIME::QuotedPrint;
 
+# XHTML 1.0 entities for html_unescape
+my %ENTITIES = (
+    Aacute   => 193,
+    aacute   => 225,
+    Acirc    => 194,
+    acirc    => 226,
+    acute    => 180,
+    AElig    => 198,
+    aelig    => 230,
+    Agrave   => 192,
+    agrave   => 224,
+    alefsym  => 8501,
+    Alpha    => 913,
+    alpha    => 945,
+    amp      => 38,
+    and      => 8743,
+    ang      => 8736,
+    apos     => 39,
+    Aring    => 197,
+    aring    => 229,
+    asymp    => 8776,
+    Atilde   => 195,
+    atilde   => 227,
+    Auml     => 196,
+    auml     => 228,
+    bdquo    => 8222,
+    Beta     => 914,
+    beta     => 946,
+    brvbar   => 166,
+    bull     => 8226,
+    cap      => 8745,
+    Ccedil   => 199,
+    ccedil   => 231,
+    cedil    => 184,
+    cent     => 162,
+    Chi      => 935,
+    chi      => 967,
+    circ     => 710,
+    clubs    => 9827,
+    cong     => 8773,
+    copy     => 169,
+    crarr    => 8629,
+    cup      => 8746,
+    curren   => 164,
+    Dagger   => 8225,
+    dagger   => 8224,
+    dArr     => 8659,
+    darr     => 8595,
+    deg      => 176,
+    Delta    => 916,
+    delta    => 948,
+    diams    => 9830,
+    divide   => 247,
+    Eacute   => 201,
+    eacute   => 233,
+    Ecirc    => 202,
+    ecirc    => 234,
+    Egrave   => 200,
+    egrave   => 232,
+    empty    => 8709,
+    emsp     => 8195,
+    ensp     => 8194,
+    Epsilon  => 917,
+    epsilon  => 949,
+    equiv    => 8801,
+    Eta      => 919,
+    eta      => 951,
+    ETH      => 208,
+    eth      => 240,
+    Euml     => 203,
+    euml     => 235,
+    euro     => 8364,
+    exist    => 8707,
+    fnof     => 402,
+    forall   => 8704,
+    frac12   => 189,
+    frac14   => 188,
+    frac34   => 190,
+    frasl    => 8260,
+    Gamma    => 915,
+    gamma    => 947,
+    ge       => 8805,
+    gt       => 62,
+    hArr     => 8660,
+    harr     => 8596,
+    hearts   => 9829,
+    hellip   => 8230,
+    Iacute   => 205,
+    iacute   => 237,
+    Icirc    => 206,
+    icirc    => 238,
+    iexcl    => 161,
+    Igrave   => 204,
+    igrave   => 236,
+    image    => 8465,
+    infin    => 8734,
+    int      => 8747,
+    Iota     => 921,
+    iota     => 953,
+    iquest   => 191,
+    isin     => 8712,
+    Iuml     => 207,
+    iuml     => 239,
+    Kappa    => 922,
+    kappa    => 954,
+    Lambda   => 923,
+    lambda   => 955,
+    lang     => 9001,
+    laquo    => 171,
+    lArr     => 8656,
+    larr     => 8592,
+    lceil    => 8968,
+    ldquo    => 8220,
+    le       => 8804,
+    lfloor   => 8970,
+    lowast   => 8727,
+    loz      => 9674,
+    lrm      => 8206,
+    lsaquo   => 8249,
+    lsquo    => 8216,
+    lt       => 60,
+    macr     => 175,
+    mdash    => 8212,
+    micro    => 181,
+    middot   => 183,
+    minus    => 8722,
+    Mu       => 924,
+    mu       => 956,
+    nabla    => 8711,
+    nbsp     => 160,
+    ndash    => 8211,
+    ne       => 8800,
+    ni       => 8715,
+    not      => 172,
+    notin    => 8713,
+    nsub     => 8836,
+    Ntilde   => 209,
+    ntilde   => 241,
+    Nu       => 925,
+    nu       => 957,
+    Oacute   => 211,
+    oacute   => 243,
+    Ocirc    => 212,
+    ocirc    => 244,
+    OElig    => 338,
+    oelig    => 339,
+    Ograve   => 210,
+    ograve   => 242,
+    oline    => 8254,
+    Omega    => 937,
+    omega    => 969,
+    Omicron  => 927,
+    omicron  => 959,
+    oplus    => 8853,
+    or       => 8744,
+    ordf     => 170,
+    ordm     => 186,
+    Oslash   => 216,
+    oslash   => 248,
+    Otilde   => 213,
+    otilde   => 245,
+    otimes   => 8855,
+    Ouml     => 214,
+    ouml     => 246,
+    para     => 182,
+    part     => 8706,
+    permil   => 8240,
+    perp     => 8869,
+    Phi      => 934,
+    phi      => 966,
+    Pi       => 928,
+    pi       => 960,
+    piv      => 982,
+    plusmn   => 177,
+    pound    => 163,
+    Prime    => 8243,
+    prime    => 8242,
+    prod     => 8719,
+    prop     => 8733,
+    Psi      => 936,
+    psi      => 968,
+    quot     => 34,
+    radic    => 8730,
+    rang     => 9002,
+    raquo    => 187,
+    rArr     => 8658,
+    rarr     => 8594,
+    rceil    => 8969,
+    rdquo    => 8221,
+    real     => 8476,
+    reg      => 174,
+    rfloor   => 8971,
+    Rho      => 929,
+    rho      => 961,
+    rlm      => 8207,
+    rsaquo   => 8250,
+    rsquo    => 8217,
+    sbquo    => 8218,
+    Scaron   => 352,
+    scaron   => 353,
+    sdot     => 8901,
+    sect     => 167,
+    shy      => 173,
+    Sigma    => 931,
+    sigma    => 963,
+    sigmaf   => 962,
+    sim      => 8764,
+    spades   => 9824,
+    sub      => 8834,
+    sube     => 8838,
+    sum      => 8721,
+    sup      => 8835,
+    sup1     => 185,
+    sup2     => 178,
+    sup3     => 179,
+    supe     => 8839,
+    szlig    => 223,
+    Tau      => 932,
+    tau      => 964,
+    there4   => 8756,
+    Theta    => 920,
+    theta    => 952,
+    thetasym => 977,
+    thinsp   => 8201,
+    THORN    => 222,
+    thorn    => 254,
+    tilde    => 732,
+    times    => 215,
+    trade    => 8482,
+    Uacute   => 218,
+    uacute   => 250,
+    uArr     => 8657,
+    uarr     => 8593,
+    Ucirc    => 219,
+    ucirc    => 251,
+    Ugrave   => 217,
+    ugrave   => 249,
+    uml      => 168,
+    upsih    => 978,
+    Upsilon  => 933,
+    upsilon  => 965,
+    Uuml     => 220,
+    uuml     => 252,
+    weierp   => 8472,
+    Xi       => 926,
+    xi       => 958,
+    Yacute   => 221,
+    yacute   => 253,
+    yen      => 165,
+    Yuml     => 376,
+    yuml     => 255,
+    Zeta     => 918,
+    zeta     => 950,
+    zwj      => 8205,
+    zwnj     => 8204
+);
+
+# Reverse entities for html_escape
+my %REVERSE_ENTITIES;
+while (my ($name, $value) = each %ENTITIES) {
+    $REVERSE_ENTITIES{$value} = $name;
+}
+
 # Unreserved character map for url_sanitize
 my %UNRESERVED;
 {
@@ -32,37 +295,38 @@ my %UNRESERVED;
 
 # Do we have any food that wasn't brutally slaughtered?
 # Well, I think the veal died of loneliness.
+sub import {
+    my ($class, $name) = @_;
+
+    # Shortcut
+    return unless $name;
+
+    # Export
+    my $caller = caller;
+    no strict 'refs';
+    *{"${caller}::$name"} = sub { Mojo::ByteStream->new(@_) };
+}
+
 sub new {
     my $self = shift->SUPER::new();
-    $self->{bytestream} = $_[0] if defined $_[0];
+    $self->{bytestream} = defined $_[0] ? $_[0] : '';
     return $self;
 }
 
 sub b64_decode {
     my $self = shift;
-
-    # Shortcut
-    return $self unless defined $self->{bytestream};
-
     $self->{bytestream} = MIME::Base64::decode_base64($self->{bytestream});
     return $self;
 }
 
 sub b64_encode {
     my $self = shift;
-
-    # Shortcut
-    return $self unless defined $self->{bytestream};
-
     $self->{bytestream} = MIME::Base64::encode_base64($self->{bytestream});
     return $self;
 }
 
 sub camelize {
     my $self = shift;
-
-    # Shortcut
-    return $self unless defined $self->{bytestream};
 
     # Split
     my @words = split /_/, $self->{bytestream};
@@ -85,9 +349,7 @@ sub decamelize {
     my $self = shift;
 
     # Shortcut
-    return $self
-      if !defined $self->{bytestream}
-          || $self->{bytestream} !~ /^[A-Z]+/;
+    return $self if $self->{bytestream} !~ /^[A-Z]+/;
 
     # Split
     my @words;
@@ -106,10 +368,17 @@ sub decode {
     my ($self, $encoding) = @_;
 
     # Shortcut
-    return $self unless defined $self->{bytestream};
     return $self unless $encoding;
 
-    $self->{bytestream} = Encode::decode($encoding, $self->{bytestream});
+    # Try decoding
+    eval {
+        $self->{bytestream} =
+          Encode::decode($encoding, $self->{bytestream}, 1);
+    };
+
+    # Failed
+    $self->{bytestream} = '' if $@;
+
     return $self;
 }
 
@@ -117,53 +386,70 @@ sub encode {
     my ($self, $encoding) = @_;
 
     # Shortcut
-    return $self unless defined $self->{bytestream};
     return $self unless $encoding;
 
     $self->{bytestream} = Encode::encode($encoding, $self->{bytestream});
     return $self;
 }
 
-sub length {
+sub html_escape {
     my $self = shift;
-    $self->{bytestream} = '' unless defined $self->{bytestream};
-    return length $self->{bytestream};
+
+    # Character semantics
+    no bytes;
+
+    my $escaped = '';
+    for (1 .. length $self->{bytestream}) {
+
+        # Escape
+        my $char = substr $self->{bytestream}, 0, 1, '';
+        my $num = unpack 'U', $char;
+        my $named = $REVERSE_ENTITIES{$num};
+        $char = "&$named;" if $named;
+        $escaped .= $char;
+    }
+    $self->{bytestream} = $escaped;
+
+    return $self;
+}
+
+sub html_unescape {
+    my $self = shift;
+
+    # Unescape
+    $self->{bytestream} =~ s/
+        &(?:
+            \#(\d{1,7})              # Number
+        |
+            ([A-Za-z]{1,8})          # Named
+        |
+            \#x([0-9A-Fa-f]{1,6}))   # Hex
+        ;
+    /_unescape($1, $2, $3)/gex;
+
+    return $self;
 }
 
 sub md5_sum {
     my $self = shift;
-
-    # Shortcut
-    return $self unless defined $self->{bytestream};
-
     $self->{bytestream} = Digest::MD5::md5_hex($self->{bytestream});
     return $self;
 }
 
 sub qp_decode {
     my $self = shift;
-
-    # Shortcut
-    return $self unless defined $self->{bytestream};
-
     $self->{bytestream} = MIME::QuotedPrint::decode_qp($self->{bytestream});
     return $self;
 }
 
 sub qp_encode {
     my $self = shift;
-
-    # Shortcut
-    return $self unless defined $self->{bytestream};
-
     $self->{bytestream} = MIME::QuotedPrint::encode_qp($self->{bytestream});
     return $self;
 }
 
 sub quote {
     my $self = shift;
-
-    $self->{bytestream} = '' unless defined $self->{bytestream};
 
     # Escape
     $self->{bytestream} =~ s/([\"\\])/\\$1/g;
@@ -172,13 +458,14 @@ sub quote {
     return $self;
 }
 
-sub to_string { return shift->{bytestream} }
+sub size { length shift->{bytestream} }
+
+sub to_string { shift->{bytestream} }
 
 sub unquote {
     my $self = shift;
 
     # Not quoted
-    return $self unless defined $self->{bytestream};
     return $self unless $self->{bytestream} =~ /^\".*\"$/g;
 
     # Unquote
@@ -193,9 +480,6 @@ sub unquote {
 sub url_escape {
     my $self = shift;
 
-    # Shortcut
-    return $self unless defined $self->{bytestream};
-
     # Default to unreserved characters
     my $pattern = shift || 'A-Za-z0-9\-\.\_\~';
 
@@ -208,9 +492,6 @@ sub url_escape {
 sub url_sanitize {
     my $self = shift;
 
-    # Shortcut
-    return $self unless defined $self->{bytestream};
-
     # Uppercase hex values and unescape unreserved characters
     $self->{bytestream} =~ s/%([0-9A-Fa-f]{2})/_sanitize($1)/ge;
 
@@ -220,11 +501,26 @@ sub url_sanitize {
 sub url_unescape {
     my $self = shift;
 
-    # Shortcut
-    return $self unless defined $self->{bytestream};
-
     # Unescape
     $self->{bytestream} =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/ge;
+
+    return $self;
+}
+
+sub xml_escape {
+    my $self = shift;
+
+    # Character semantics
+    no bytes;
+
+    # Replace "&", "<", ">", """ and "'"
+    for ($self->{bytestream}) {
+        s/&/&amp;/g;
+        s/</&lt;/g;
+        s/>/&gt;/g;
+        s/"/&quot;/g;
+        s/'/&apos;/g;
+    }
 
     return $self;
 }
@@ -237,6 +533,23 @@ sub _sanitize {
     return chr $char if $UNRESERVED{$char};
 
     return '%' . uc $hex;
+}
+
+# Helper for html_unescape
+sub _unescape {
+    my ($num, $entitie, $hex) = @_;
+
+    # Named to number
+    if (defined $entitie) { $num = $ENTITIES{$entitie} }
+
+    # Hex to number
+    elsif (defined $hex) { $num = hex $hex }
+
+    # Number
+    return pack 'U', $num if $num;
+
+    # Unknown entitie
+    return "&$entitie;";
 }
 
 1;
@@ -256,26 +569,34 @@ Mojo::ByteStream - ByteStream
     $stream->decamelize;
     $stream->b64_encode;
     $stream->b64_decode;
-    $stream->encode('utf8');
-    $stream->decode('utf8');
+    $stream->encode('UTF-8');
+    $stream->decode('UTF-8');
+    $stream->html_escape;
+    $stream->html_unescape;
     $stream->md5_sum;
-    $stream->qp_decode;
     $stream->qp_encode;
+    $stream->qp_decode;
     $stream->quote;
     $stream->unquote;
     $stream->url_escape;
     $stream->url_sanitize;
     $stream->url_unescape;
+    $stream->xml_escape;
 
-    my $length = $stream->length;
+    my $size = $stream->size;
 
     my $stream2 = $stream->clone;
     print $stream2->to_string;
 
     # Chained
     my $stream = Mojo::ByteStream->new('foo bar baz')->quote;
-    $stream = $stream->unquote->encode('utf8)->b64_encode;
+    $stream = $stream->unquote->encode('UTF-8)->b64_encode;
     print "$stream";
+
+    # Constructor alias
+    use Mojo::ByteStream 'b';
+
+    my $stream = b('foobarbaz')->html_escape;
 
 =head1 DESCRIPTION
 
@@ -319,9 +640,13 @@ the following new ones.
 
     $stream = $stream->encode($encoding);
 
-=head2 C<length>
+=head2 C<html_escape>
 
-    my $length = $stream->length;
+    $stream = $stream->html_escape;
+
+=head2 C<html_unescape>
+
+    $stream = $stream->html_unescape;
 
 =head2 C<md5_sum>
 
@@ -338,6 +663,10 @@ the following new ones.
 =head2 C<quote>
 
     $stream = $stream->quote;
+
+=head2 C<size>
+
+    my $size = $stream->size;
 
 =head2 C<to_string>
 
@@ -360,8 +689,8 @@ the following new ones.
 
     $stream = $stream->url_unescape;
 
-=head1 SEE ALSO
+=head2 C<xml_escape>
 
-L<Digest::MD5>, L<Encode>, L<MIME::Base64>, L<MIME::QuotedPrint>
+    $stream = $stream->xml_escape;
 
 =cut

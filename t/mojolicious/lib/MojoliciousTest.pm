@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package MojoliciousTest;
 
@@ -11,25 +11,15 @@ sub development_mode {
     my $self = shift;
 
     # Static root for development
-    $self->static->root($self->home->rel_dir('t/mojolicious/public_dev'));
-}
-
-sub production_mode {
-    my $self = shift;
-
-    # Static root for production
-    $self->static->root($self->home->rel_dir('t/mojolicious/public'));
+    $self->static->root($self->home->rel_dir('public_dev'));
 }
 
 # Let's face it, comedy's a dead art form. Tragedy, now that's funny.
 sub startup {
     my $self = shift;
 
-    # Only log errors
-    $self->log->level('error');
-
-    # Template root
-    $self->renderer->root($self->home->rel_dir('t/mojolicious/templates'));
+    # Only log errors to STDERR
+    $self->log->level('fatal');
 
     # Templateless renderer
     $self->renderer->add_handler(
@@ -39,8 +29,27 @@ sub startup {
         }
     );
 
+    # Renderer for a different file extension
+    $self->renderer->add_handler(xpl => $self->renderer->handler->{epl});
+
+    # Default handler
+    $self->renderer->default_handler('epl');
+
     # Routes
     my $r = $self->routes;
+
+    # /stash_config
+    $r->route('/stash_config')
+      ->to(controller => 'foo', action => 'config', config => {test => 123});
+
+    # /test4 - named route for url_for
+    $r->route('/test4/:something')
+      ->to(controller => 'foo', action => 'something', something => 23)
+      ->name('soemthing');
+
+    # /test3 - no class, just a namespace
+    $r->route('/test3')
+      ->to(namespace => 'MojoliciousTestController', method => 'index');
 
     # /test2 - different namespace test
     $r->route('/test2')->to(
@@ -49,8 +58,13 @@ sub startup {
         method    => 'test'
     );
 
+    # /staged - authentication with bridges
+    my $b =
+      $r->bridge('/staged')->to(controller => 'foo', action => 'stage1');
+    $b->route->to(action => 'stage2');
+
     # /*/* - the default route
-    $r->route('/:controller/:action')->to(action => 'index');
+    $r->route('/(controller)/(action)')->to(action => 'index');
 }
 
 1;

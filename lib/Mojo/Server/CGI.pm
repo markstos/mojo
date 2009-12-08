@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package Mojo::Server::CGI;
 
@@ -6,10 +6,13 @@ use strict;
 use warnings;
 
 use base 'Mojo::Server';
+use bytes;
 
-use IO::Select;
+use IO::Poll 'POLLIN';
 
-__PACKAGE__->attr(nph => (chained => 1, default => 0));
+use constant CHUNK_SIZE => $ENV{MOJO_CHUNK_SIZE} || 4096;
+
+__PACKAGE__->attr(nph => 0);
 
 # Lisa, you're a Buddhist, so you believe in reincarnation.
 # Eventually, Snowball will be reborn as a higher lifeform... like a snowman.
@@ -22,11 +25,18 @@ sub run {
     # Environment
     $req->parse(\%ENV);
 
+    # Store connection information
+    $tx->remote_address($ENV{REMOTE_ADDR});
+    $tx->local_port($ENV{SERVER_PORT});
+
     # Request body
-    my $select = IO::Select->new(\*STDIN);
+    my $poll = IO::Poll->new;
+    $poll->mask(\*STDIN, POLLIN);
     while (!$req->is_finished) {
-        last unless $select->can_read(0);
-        my $read = STDIN->sysread(my $buffer, 4096, 0);
+        $poll->poll(0);
+        my @readers = $poll->handles(POLLIN);
+        last unless @readers;
+        my $read = STDIN->sysread(my $buffer, CHUNK_SIZE, 0);
         $req->parse($buffer);
     }
 
@@ -51,15 +61,20 @@ sub run {
             last unless length $chunk;
 
             # Start line
+            return unless STDOUT->opened;
             my $written = STDOUT->syswrite($chunk);
+            return unless defined $written;
             $offset += $written;
         }
     }
 
+    # Status
+    if (my $code = $res->code) {
+        my $message = $res->message || $res->default_message;
+        $res->headers->header('Status', "$code $message") unless $self->nph;
+    }
+
     # Response headers
-    my $code = $res->code;
-    my $message = $res->message || $res->default_message;
-    $res->headers->header('Status', "$code $message") unless $self->nph;
     $offset = 0;
     while (1) {
         my $chunk = $res->get_header_chunk($offset);
@@ -74,7 +89,9 @@ sub run {
         last unless length $chunk;
 
         # Headers
+        return unless STDOUT->opened;
         my $written = STDOUT->syswrite($chunk);
+        return unless defined $written;
         $offset += $written;
     }
 
@@ -93,7 +110,9 @@ sub run {
         last unless length $chunk;
 
         # Content
+        return unless STDOUT->opened;
         my $written = STDOUT->syswrite($chunk);
+        return unless defined $written;
         $offset += $written;
     }
 
@@ -101,7 +120,6 @@ sub run {
 }
 
 1;
-
 __END__
 
 =head1 NAME

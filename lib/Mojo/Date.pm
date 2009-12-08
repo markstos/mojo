@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package Mojo::Date;
 
@@ -10,7 +10,21 @@ use overload '""' => sub { shift->to_string }, fallback => 1;
 
 require Time::Local;
 
-__PACKAGE__->attr(epoch => (chained => 1));
+__PACKAGE__->attr('epoch');
+
+# Days and months
+my @DAYS   = qw/Sun Mon Tue Wed Thu Fri Sat/;
+my @MONTHS = qw/Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec/;
+
+# Reverse months
+my %MONTHS;
+{
+    my $i = 0;
+    for my $month (@MONTHS) {
+        $MONTHS{$month} = $i;
+        $i++;
+    }
+}
 
 sub new {
     my $self = shift->SUPER::new();
@@ -25,10 +39,8 @@ sub new {
 sub parse {
     my ($self, $date) = @_;
 
-    $self = $self->new unless ref $self;
-
     # Shortcut
-    return unless defined $date;
+    return $self unless defined $date;
 
     # epoch - 784111777
     if ($date =~ /^\d+$/) {
@@ -38,22 +50,17 @@ sub parse {
 
     # Remove spaces, weekdays and timezone
     $date =~ s/^\s+//;
-    $date =~ s/^(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat)[a-z]*,?\s*//i;
+    my $re = join '|', @DAYS;
+    $date =~ s/^(?:$re)[a-z]*,?\s*//i;
     $date =~ s/GMT\s*$//i;
     $date =~ s/\s+$//;
 
     my ($day, $month, $year, $hour, $minute, $second);
-    my $months = {};
-    my $i      = 0;
-    for my $m (qw/Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec/) {
-        $months->{$m} = $i;
-        $i++;
-    }
 
     # RFC822/1123 - Sun, 06 Nov 1994 08:49:37 GMT
     if ($date =~ /^(\d+)\s+(\w+)\s+(\d+)\s+(\d+):(\d+):(\d+)$/) {
         $day    = $1;
-        $month  = $months->{$2};
+        $month  = $MONTHS{$2};
         $year   = $3;
         $hour   = $4;
         $minute = $5;
@@ -63,7 +70,7 @@ sub parse {
     # RFC850/1036 - Sunday, 06-Nov-94 08:49:37 GMT
     elsif ($date =~ /^(\d+)-(\w+)-(\d+)\s+(\d+):(\d+):(\d+)$/) {
         $day    = $1;
-        $month  = $months->{$2};
+        $month  = $MONTHS{$2};
         $year   = $3;
         $hour   = $4;
         $minute = $5;
@@ -72,7 +79,7 @@ sub parse {
 
     # ANSI C asctime() - Sun Nov  6 08:49:37 1994
     elsif ($date =~ /^(\w+)\s+(\d+)\s+(\d+):(\d+):(\d+)\s+(\d+)$/) {
-        $month  = $months->{$1};
+        $month  = $MONTHS{$1};
         $day    = $2;
         $hour   = $3;
         $minute = $4;
@@ -81,28 +88,35 @@ sub parse {
     }
 
     # Invalid format
-    else { return undef }
+    else { return $self }
 
-    $self->epoch(
-        Time::Local::timegm($second, $minute, $hour, $day, $month, $year));
+    my $epoch;
+
+    # Prevent crash
+    eval {
+        $epoch =
+          Time::Local::timegm($second, $minute, $hour, $day, $month, $year);
+    };
+
+    return $self if $@ || $epoch < 0;
+
+    $self->epoch($epoch);
+
     return $self;
 }
 
 sub to_string {
-    my $self = shift;
-    my $epoch = shift || $self->{epoch};
+    my $self  = shift;
+    my $epoch = $self->epoch;
 
     $epoch = time unless defined $epoch;
 
     my ($second, $minute, $hour, $mday, $month, $year, $wday) = gmtime $epoch;
 
-    my $days   = [qw/Sun Mon Tue Wed Thu Fri Sat/];
-    my $months = [qw/Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec/];
-
     # Format
     return sprintf(
         "%s, %02d %s %04d %02d:%02d:%02d GMT",
-        $days->[$wday], $mday, $months->[$month], $year + 1900,
+        $DAYS[$wday], $mday, $MONTHS[$month], $year + 1900,
         $hour, $minute, $second
     );
 }
@@ -133,13 +147,12 @@ L<Mojo::Date> implements HTTP date and time functions according to RFC2616.
 
 =head1 ATTRIBUTES
 
+L<Mojo::Date> implements the following attributes.
+
 =head2 C<epoch>
 
     my $epoch = $date->epoch;
     $date     = $date->epoch(784111777);
-
-Returns epoch seconds if called without arguments.
-Returns the invocant if called with arguments.
 
 =head1 METHODS
 
@@ -148,14 +161,12 @@ following new ones.
 
 =head2 C<new>
 
+    my $date = Mojo::Date->new;
     my $date = Mojo::Date->new($string);
 
 =head2 C<parse>
 
     $date = $date->parse('Sun Nov  6 08:49:37 1994');
-
-Returns the invocant if the given date could be parsed successfully.
-Returns false otherwise.
 
 Parsable formats include:
 
@@ -167,7 +178,5 @@ Parsable formats include:
 =head2 C<to_string>
 
     my $string = $date->to_string;
-
-Returns a valid HTTP date according to RFC 822.
 
 =cut

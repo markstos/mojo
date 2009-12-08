@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package MojoX::Routes::Match;
 
@@ -7,30 +7,26 @@ use warnings;
 
 use base 'Mojo::Base';
 
-use Mojo::Transaction;
 use Mojo::URL;
 
-__PACKAGE__->attr(captures => (chained => 1, default => sub { {} }));
-__PACKAGE__->attr(endpoint => (chained => 1));
-__PACKAGE__->attr(
-    path => (
-        chained => 1,
-        default => sub { shift->tx->req->url->path->to_string }
-    )
-);
-__PACKAGE__->attr(stack => (chained => 1, default => sub { [] }));
-__PACKAGE__->attr(
-    tx => (
-        chained => 1,
-        default => sub { Mojo::Transaction->new }
-    )
-);
+__PACKAGE__->attr([qw/captures dictionary/] => sub { {} });
+__PACKAGE__->attr([qw/endpoint root tx/]);
+__PACKAGE__->attr(path  => sub {'/'});
+__PACKAGE__->attr(stack => sub { [] });
 
 # I'm Bender, baby, please insert liquor!
 sub new {
     my $self = shift->SUPER::new();
-    $self->tx($_[0]);
+    my $tx   = shift;
+    $self->tx($tx);
+    $self->path($tx->req->url->path->to_string);
     return $self;
+}
+
+sub is_path_empty {
+    my $self = shift;
+    return 1 if !length $self->path || $self->path eq '/';
+    return;
 }
 
 sub url_for {
@@ -68,7 +64,7 @@ sub url_for {
             }
 
             # Just values
-            $values = {@_};
+            else { $values = {@_} }
 
         }
     }
@@ -76,14 +72,8 @@ sub url_for {
     # Named
     if ($name) {
 
-        # Find root
-        my $stop = $endpoint;
-        while ($stop->parent) {
-            $stop = $stop->parent;
-        }
-
         # Find endpoint
-        my @children = ($stop);
+        my @children = ($self->root);
         while (my $child = shift @children) {
 
             if (($child->name || '') eq $name) {
@@ -129,20 +119,32 @@ L<MojoX::Routes::Match> is a match container.
 
 =head2 ATTRIBUTES
 
+L<MojoX::Routes::Match> implements the following attributes.
+
 =head2 C<captures>
 
     my $captures = $match->captures;
     $match       = $match->captures({foo => 'bar'});
 
+=head2 C<dictionary>
+
+    my $dictionary = $match->dictionary;
+    $match         = $match->dictionary({foo => sub { ... }});
+
 =head2 C<endpoint>
 
     my $endpoint = $match->endpoint;
-    $match       = $match->endpoint(1);
+    $match       = $match->endpoint(MojoX::Routes->new);
 
 =head2 C<path>
 
     my $path = $match->path;
     $match   = $match->path('/foo/bar/baz');
+
+=head2 C<root>
+
+    my $root = $match->root;
+    $match   = $match->root($routes);
 
 =head2 C<stack>
 
@@ -152,7 +154,7 @@ L<MojoX::Routes::Match> is a match container.
 =head2 C<tx>
 
     my $tx = $match->tx;
-    $match = $match->tx(Mojo::Transaction->new);
+    $match = $match->tx(Mojo::Transaction::Single->new);
 
 =head1 METHODS
 
@@ -162,7 +164,11 @@ implements the follwing the ones.
 =head2 C<new>
 
     my $match = MojoX::Routes::Match->new;
-    my $match = MojoX::Routes::Match->new(Mojo::Transaction->new);
+    my $match = MojoX::Routes::Match->new(Mojo::Transaction::Single->new);
+
+=head2 C<is_path_empty>
+
+    my $result = $match->is_path_empty;
 
 =head2 C<url_for>
 

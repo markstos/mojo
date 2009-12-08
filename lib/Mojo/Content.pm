@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package Mojo::Content;
 
@@ -8,36 +8,29 @@ use warnings;
 use base 'Mojo::Stateful';
 use bytes;
 
+use Carp 'croak';
 use Mojo::Buffer;
 use Mojo::Filter::Chunked;
-use Mojo::File;
-use Mojo::File::Memory;
-use Mojo::Content::MultiPart;
 use Mojo::Headers;
 
-use constant MAX_MEMORY_SIZE => $ENV{MOJO_MAX_MEMORY_SIZE} || 10240;
+use constant CHUNK_SIZE => $ENV{MOJO_CHUNK_SIZE} || 4096;
 
-__PACKAGE__->attr(
-    [qw/buffer filter_buffer/] => (
-        chained => 1,
-        default => sub { Mojo::Buffer->new }
-    )
-);
-__PACKAGE__->attr([qw/body_cb filter builder_progress_cb/] => (chained => 1));
-__PACKAGE__->attr(
-    file => (
-        chained => 1,
-        default => sub { Mojo::File::Memory->new }
-    )
-);
-__PACKAGE__->attr(
-    headers => (
-        chained => 1,
-        default => sub { Mojo::Headers->new }
-    )
-);
-__PACKAGE__->attr(raw_header_length => (chained => 1, default => 0));
+__PACKAGE__->attr([qw/body_cb filter progress_cb/]);
+__PACKAGE__->attr([qw/buffer filter_buffer/] => sub { Mojo::Buffer->new });
+__PACKAGE__->attr(headers                    => sub { Mojo::Headers->new });
+__PACKAGE__->attr(raw_header_size            => 0);
+__PACKAGE__->attr(relaxed                    => 0);
 
+__PACKAGE__->attr(_body_size => 0);
+__PACKAGE__->attr('_eof');
+
+sub body_contains {
+    croak 'Method "body_contains" not implemented by subclass';
+}
+
+sub body_size { croak 'Method "body_size" not implemented by subclass' }
+
+# Operator! Give me the number for 911!
 sub build_body {
     my $self = shift;
 
@@ -82,25 +75,40 @@ sub build_headers {
     return $headers;
 }
 
-sub body_contains {
-    my ($self, $chunk) = @_;
-    return $self->file->contains($chunk);
-}
-
-sub body_length { shift->file->length }
-
-sub get_body_chunk {
+sub generate_body_chunk {
     my ($self, $offset) = @_;
 
-    # Progress
-    $self->builder_progress_cb->($self, 'body', $offset)
-      if $self->builder_progress_cb;
+    # Shortcut
+    return '' unless $self->body_cb;
 
-    # Body generator
-    return $self->body_cb->($self, $offset) if $self->body_cb;
+    # Remove written
+    my $written = $offset - ($self->buffer->raw_size - $self->buffer->size);
+    $self->buffer->remove($written);
 
-    # Normal content
-    return $self->file->get_chunk($offset);
+    # Enough in buffer?
+    if (!$self->_eof && $self->buffer->size < CHUNK_SIZE) {
+
+        # Generate
+        my $chunk = $self->body_cb->($self, $self->buffer->raw_size);
+
+        # EOF
+        if (defined $chunk && !length $chunk) { $self->_eof(1) }
+
+        # Buffer chunk
+        else { $self->buffer->add_chunk($chunk) }
+    }
+
+    # Get chunk
+    my $chunk = $self->buffer->to_string;
+
+    # Pause or EOF
+    return $self->_eof ? '' : undef unless length $chunk;
+
+    return $chunk;
+}
+
+sub get_body_chunk {
+    croak 'Method "get_body_chunk" not implemented by subclass';
 }
 
 sub get_header_chunk {
@@ -108,10 +116,16 @@ sub get_header_chunk {
 
     # Normal headers
     my $copy = $self->_build_headers;
-    return substr($copy, $offset, 4096);
+    return substr($copy, $offset, CHUNK_SIZE);
 }
 
-sub header_length { return length shift->build_headers }
+sub has_leftovers {
+    my $self = shift;
+    return 1 if $self->buffer->size || $self->filter_buffer->size;
+    return;
+}
+
+sub header_size { length shift->build_headers }
 
 sub is_chunked {
     my $self = shift;
@@ -125,24 +139,25 @@ sub is_multipart {
     return $type =~ /multipart/i ? 1 : 0;
 }
 
-sub parse {
+sub leftovers {
     my $self = shift;
 
-    # Buffer
-    $self->filter_buffer->add_chunk(join '', @_) if @_;
-    my $buffer = $self->filter_buffer;
+    # Chunked leftovers are in the filter buffer, and so are those from a
+    # HEAD request
+    return $self->filter_buffer->to_string if $self->filter_buffer->size;
 
-    # Parser started
-    if ($self->is_state('start')) {
-        my $length            = length($self->filter_buffer->{buffer});
-        my $raw_length        = $self->filter_buffer->raw_length;
-        my $raw_header_length = $raw_length - $length;
-        $self->raw_header_length($raw_header_length);
-        $self->state('headers');
-    }
+    # Normal leftovers
+    return $self->buffer->to_string;
+}
+
+sub parse {
+    my ($self, $chunk) = @_;
+
+    # Buffer
+    $self->filter_buffer->add_chunk($chunk);
 
     # Parse headers
-    $self->_parse_headers if $self->is_state('headers');
+    $self->parse_until_body;
 
     # Still parsing headers
     return $self if $self->is_state('headers');
@@ -167,32 +182,66 @@ sub parse {
     # Not chunked, pass through
     else { $self->buffer($self->filter_buffer) }
 
-    # Content needs to be upgraded to multipart
-    if ($self->is_multipart) {
+    # Custom body parser
+    if (my $cb = $self->body_cb) {
 
-        # Shortcut
-        return $self if $self->isa('Mojo::Content::MultiPart');
+        # Chunked or relaxed content
+        if ($self->is_chunked || $self->relaxed) {
+            $self->$cb($self->buffer->empty);
+        }
 
-        # Need to upgrade
-        return Mojo::Content::MultiPart->new($self)->parse;
+        # Normal content
+        else {
+
+            # Need
+            my $length = $self->headers->content_length || 0;
+            my $need = $length - $self->_body_size;
+
+            # Slurp
+            if ($need > 0) {
+                my $chunk = $self->buffer->remove($need);
+                $self->_body_size($self->_body_size + length $chunk);
+                $self->$cb($chunk);
+            }
+
+            # Done
+            $self->done if $length <= $self->raw_body_size;
+        }
     }
 
-    # Parse body
-    $self->file->add_chunk($self->buffer->empty);
-
-    # Done
-    unless ($self->is_chunked) {
-        my $length = $self->headers->content_length || 0;
-        $self->done if $length <= $self->raw_body_length;
+    # Leftovers
+    if ($self->is_done) {
+        $self->state('done_with_leftovers') if $self->has_leftovers;
     }
 
     return $self;
 }
 
-sub raw_body_length {
+sub parse_until_body {
+    my ($self, $chunk) = @_;
+
+    # Buffer
+    $self->filter_buffer->add_chunk($chunk);
+
+    # Parser started
+    if ($self->is_state('start')) {
+        my $length            = $self->filter_buffer->size;
+        my $raw_length        = $self->filter_buffer->raw_size;
+        my $raw_header_length = $raw_length - $length;
+        $self->raw_header_size($raw_header_length);
+        $self->state('headers');
+    }
+
+    # Parse headers
+    $self->_parse_headers if $self->is_state('headers');
+
+    return $self;
+}
+
+sub raw_body_size {
     my $self          = shift;
-    my $length        = $self->filter_buffer->raw_length;
-    my $header_length = $self->raw_header_length;
+    my $length        = $self->filter_buffer->raw_size;
+    my $header_length = $self->raw_header_size;
     return $length - $header_length;
 }
 
@@ -209,19 +258,11 @@ sub _parse_headers {
     $self->headers->buffer($self->filter_buffer);
     $self->headers->parse;
 
-    my $length            = length($self->headers->buffer->{buffer});
-    my $raw_length        = $self->headers->buffer->raw_length;
+    my $length            = $self->headers->buffer->size;
+    my $raw_length        = $self->headers->buffer->raw_size;
     my $raw_header_length = $raw_length - $length;
 
-    $self->raw_header_length($raw_header_length);
-
-    # Make sure we don't waste memory
-    if ($self->file->isa('Mojo::File::Memory')) {
-        $self->file(Mojo::File->new)
-          if !$self->headers->content_length
-              || $self->headers->content_length > MAX_MEMORY_SIZE;
-    }
-
+    $self->raw_header_size($raw_header_length);
     $self->state('body') if $self->headers->is_done;
 }
 
@@ -230,18 +271,15 @@ __END__
 
 =head1 NAME
 
-Mojo::Content - Content
+Mojo::Content - HTTP Content Base Class
 
 =head1 SYNOPSIS
 
-    use Mojo::Content;
-
-    my $content = Mojo::Content->new;
-    $content->parse("Content-Length: 12\r\n\r\nHello World!");
+    use base 'Mojo::Content';
 
 =head1 DESCRIPTION
 
-L<Mojo::Content> is a container for HTTP content.
+L<Mojo::Content> is a HTTP content base class.
 
 =head1 ATTRIBUTES
 
@@ -262,54 +300,55 @@ implements the following new ones.
         return $chunk;
     });
 
-=head2 C<body_length>
-
-    my $body_length = $content->body_length;
-
 =head2 C<buffer>
 
     my $buffer = $content->buffer;
     $content   = $content->buffer(Mojo::Buffer->new);
 
-=head2 C<builder_progress_cb>
+=head2 C<filter>
 
-    my $cb   = $content->builder_progress_cb;
-    $content = $content->builder_progress_cb(sub {
-        my $self = shift;
-        print '+';
-    });
-
-=head2 C<file>
-
-    my $file = $content->file;
-    $content = $content->file(Mojo::File::Memory->new);
+    my $filter = $content->filter;
+    $content   = $content->filter(Mojo::Filter::Chunked->new);
 
 =head2 C<filter_buffer>
 
     my $filter_buffer = $content->filter_buffer;
     $content          = $content->filter_buffer(Mojo::Buffer->new);
 
-=head2 C<header_length>
-
-    my $header_length = $content->header_length;
-
 =head2 C<headers>
 
     my $headers = $content->headers;
     $content    = $content->headers(Mojo::Headers->new);
 
-=head2 C<raw_header_length>
+=head2 C<progress_cb>
 
-    my $raw_header_length = $content->raw_header_length;
+    my $cb   = $content->progress_cb;
+    $content = $content->progress_cb(sub {
+        my $self = shift;
+        print '+';
+    });
 
-=head2 C<raw_body_length>
+=head2 C<relaxed>
 
-    my $raw_body_length = $content->raw_body_length;
+    my $relaxed = $content->relaxed;
+    $content    = $content->relaxed(1);
+
+=head2 C<raw_header_size>
+
+    my $size = $content->raw_header_size;
 
 =head1 METHODS
 
 L<Mojo::Content> inherits all methods from L<Mojo::Stateful> and implements
 the following new ones.
+
+=head2 C<body_contains>
+
+    my $found = $content->body_contains('foo bar baz');
+
+=head2 C<body_size>
+
+    my $size = $content->body_size;
 
 =head2 C<build_body>
 
@@ -319,9 +358,9 @@ the following new ones.
 
     my $string = $content->build_headers;
 
-=head2 C<body_contains>
+=head2 C<generate_body_chunk>
 
-    my $found = $content->body_contains;
+    my $chunk = $content->generate_body_chunk(0);
 
 =head2 C<get_body_chunk>
 
@@ -331,6 +370,14 @@ the following new ones.
 
     my $chunk = $content->get_header_chunk(13);
 
+=head2 C<has_leftovers>
+
+    my $leftovers = $content->has_leftovers;
+
+=head2 C<header_size>
+
+    my $size = $content->header_size;
+
 =head2 C<is_chunked>
 
     my $chunked = $content->is_chunked;
@@ -339,8 +386,22 @@ the following new ones.
 
     my $multipart = $content->is_multipart;
 
+=head2 C<leftovers>
+
+    my $bytes = $content->leftovers;
+
 =head2 C<parse>
 
     $content = $content->parse("Content-Length: 12\r\n\r\nHello World!");
+
+=head2 C<parse_until_body>
+
+    $content = $content->parse_until_body(
+        "Content-Length: 12\r\n\r\nHello World!"
+    );
+
+=head2 C<raw_body_size>
+
+    my $size = $content->raw_body_size;
 
 =cut

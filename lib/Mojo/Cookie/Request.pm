@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package Mojo::Cookie::Request;
 
@@ -7,7 +7,7 @@ use warnings;
 
 use base 'Mojo::Cookie';
 
-use Mojo::ByteStream;
+use Mojo::ByteStream 'b';
 
 # Lisa, would you like a donut?
 # No thanks. Do you have any fruit?
@@ -21,11 +21,10 @@ sub parse {
     for my $knot ($self->_tokenize($string)) {
         for my $token (@{$knot}) {
 
-            my $name  = $token->[0];
-            my $value = $token->[1];
+            my ($name, $value) = @{$token};
 
             # Value might be quoted
-            $value = Mojo::ByteStream->new($value)->unquote if $value;
+            $value = b($value)->unquote if $value;
 
             # Path
             if ($name =~ /^\$Path$/i) { $cookies[-1]->path($value) }
@@ -37,7 +36,7 @@ sub parse {
             else {
                 push @cookies, Mojo::Cookie::Request->new;
                 $cookies[-1]->name($name);
-                $cookies[-1]->value(Mojo::ByteStream->new($value)->unquote);
+                $cookies[-1]->value(b($value)->unquote);
                 $cookies[-1]->version($version);
             }
         }
@@ -55,12 +54,10 @@ sub prefix {
 sub to_string {
     my $self = shift;
 
+    # Shortcut
     return '' unless $self->name;
 
-    my $name   = $self->name;
-    my $value  = $self->value;
-    my $cookie = "$name=$value";
-
+    my $cookie = $self->name . '=' . $self->value;
     if (my $path = $self->path) { $cookie .= "; \$Path=$path" }
 
     return $cookie;

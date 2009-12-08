@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package Mojolicious::Controller;
 
@@ -7,16 +7,135 @@ use warnings;
 
 use base 'MojoX::Dispatcher::Routes::Controller';
 
-# Well, at least here you'll be treated with dignity.
-# Now strip naked and get on the probulator.
+use Mojo::ByteStream;
+use Mojo::URL;
 
-sub render { shift->ctx->render(@_) }
+# Space: It seems to go on and on forever...
+# but then you get to the end and a gorilla starts throwing barrels at you.
+sub client { shift->app->client }
 
-sub req { shift->ctx->req }
+sub param { shift->tx->req->param(@_) }
 
-sub res { shift->ctx->res }
+sub pause { shift->tx->pause }
 
-sub stash { shift->ctx->stash(@_) }
+sub redirect_to {
+    my $self   = shift;
+    my $target = shift;
+
+    # Prepare location
+    my $base     = $self->req->url->base->clone;
+    my $location = Mojo::URL->new->base($base);
+
+    # Path
+    if ($target =~ /^\//) { $location->path($target) }
+
+    # URL
+    elsif ($target =~ /^\w+\:\/\//) { $location = $target }
+
+    # Named
+    else { $location = $self->url_for($target, @_) }
+
+    # Code
+    $self->res->code(302);
+
+    # Location header
+    $self->res->headers->location($location);
+
+    return $self;
+}
+
+sub render {
+    my $self = shift;
+
+    # Template as single argument?
+    $self->stash->{template} = shift
+      if (@_ % 2 && !ref $_[0]) || (!@_ % 2 && ref $_[1]);
+
+    # Merge args with stash
+    my $args = ref $_[0] ? $_[0] : {@_};
+    $self->{stash} = {%{$self->stash}, %$args};
+
+    # Template
+    unless ($self->stash->{template}) {
+
+        # Default template
+        my $controller = $self->stash->{controller};
+        my $action     = $self->stash->{action};
+
+        # Try the route name if we don't have controller and action
+        unless ($controller && $action) {
+            my $endpoint = $self->match->endpoint;
+
+            # Use endpoint name as default template
+            $self->stash(template => $endpoint->name)
+              if $endpoint && $endpoint->name;
+        }
+
+        # Normal default template
+        else {
+            $self->stash(
+                template => join('/', split(/-/, $controller), $action));
+        }
+    }
+
+    # Render
+    return $self->app->renderer->render($self);
+}
+
+sub render_inner {
+    my ($self, $name, $content) = @_;
+
+    # Initialize
+    $self->stash->{content} ||= {};
+    $name ||= 'content';
+
+    # Set
+    $self->stash->{content}->{$name} ||= Mojo::ByteStream->new("$content")
+      if $content;
+
+    # Get
+    return $self->stash->{content}->{$name};
+}
+
+sub render_json {
+    my $self = shift;
+    $self->stash->{json} = shift;
+    return $self->render(@_);
+}
+
+sub render_partial {
+    my $self = shift;
+    local $self->stash->{partial} = 1;
+    return Mojo::ByteStream->new($self->render(@_));
+}
+
+sub render_text {
+    my $self = shift;
+    $self->stash->{text} = shift;
+    return $self->render(@_);
+}
+
+sub resume { shift->tx->resume }
+
+sub url_for {
+    my $self = shift;
+
+    # Make sure we have a match for named routes
+    $self->match(MojoX::Routes::Match->new->root($self->app->routes))
+      unless $self->match;
+
+    # Use match or root
+    my $url = $self->match->url_for(@_);
+
+    # Base
+    $url->base($self->tx->req->url->base->clone);
+
+    # Fix paths
+    unshift @{$url->path->parts}, @{$url->base->path->parts};
+    $url->base->path->parts([]);
+
+    return $url;
+}
 
 1;
 __END__
@@ -33,30 +152,80 @@ Mojolicious::Controller - Controller Base Class
 
 L<Mojolicous::Controller> is a controller base class.
 
+=head1 ATTRIBUTES
+
+L<Mojolicious::Controller> inherits all attributes from
+L<MojoX::Dispatcher::Routes::Controller>.
+
 =head1 METHODS
 
 L<Mojolicious::Controller> inherits all methods from
 L<MojoX::Dispatcher::Routes::Controller> and implements the following new
 ones.
 
+=head2 C<client>
+
+    my $client = $c->client;
+
+=head2 C<param>
+
+    my $param  = $c->param('foo');
+    my @params = $c->param('foo');
+
+=head2 C<pause>
+
+    $c->pause;
+
+=head2 C<redirect_to>
+
+    $c = $c->redirect_to('named');
+    $c = $c->redirect_to('named', foo => 'bar');
+    $c = $c->redirect_to('/path');
+    $c = $c->redirect_to('http://127.0.0.1/foo/bar');
+
 =head2 C<render>
 
-    $controller->render;
-    $controller->render(action => 'foo');
+    $c->render;
+    $c->render(controller => 'foo', action => 'bar');
+    $c->render({controller => 'foo', action => 'bar'});
+    $c->render(text => 'Hello!');
+    $c->render(template => 'index');
+    $c->render(template => 'foo/index');
+    $c->render(template => 'index', format => 'html', handler => 'epl');
+    $c->render(handler => 'something');
+    $c->render('foo/bar');
+    $c->render('foo/bar', format => 'html');
+    $c->render('foo/bar', {format => 'html'});
 
-=head2 C<req>
+=head2 C<render_inner>
 
-    my $req = $controller->req;
+    my $output = $c->render_inner;
+    my $output = $c->render_inner('content');
+    my $output = $c->render_inner(content => 'Hello world!');
 
-=head2 C<res>
+=head2 C<render_json>
 
-    my $res = $controller->res;
+    $c->render_json({foo => 'bar'});
+    $c->render_json([1, 2, -3]);
 
-=head2 C<stash>
+=head2 C<render_partial>
 
-    my $stash   = $controller->stash;
-    my $foo     = $controller->stash('foo');
-    $controller = $controller->stash({foo => 'bar'});
-    $controller = $controller->stash(foo => 'bar');
+    my $output = $c->render_partial;
+    my $output = $c->render_partial(action => 'foo');
+
+=head2 C<render_text>
+
+    $c->render_text('Hello World!');
+    $c->render_text('Hello World', layout => 'green');
+
+=head2 C<resume>
+
+    $c->resume;
+
+=head2 C<url_for>
+
+    my $url = $c->url_for;
+    my $url = $c->url_for(controller => 'bar', action => 'baz');
+    my $url = $c->url_for('named', controller => 'bar', action => 'baz');
 
 =cut

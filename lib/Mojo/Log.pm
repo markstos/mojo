@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package Mojo::Log;
 
@@ -7,28 +7,32 @@ use warnings;
 
 use base 'Mojo::Base';
 
+use Carp 'croak';
 use IO::File;
 
 __PACKAGE__->attr(
-    handle => (
-        chained => 1,
-        default => sub {
-            my $self = shift;
+    handle => sub {
+        my $self = shift;
 
-            # Need a log file
-            return \*STDERR unless $self->path;
-
-            # Open
-            my $file = IO::File->new;
-            my $path = $self->path;
-            $file->open(">> $path")
-              || die qq/Couldn't open log file "$path": $!/;
-            return $file;
+        # Need a log file
+        unless ($self->path) {
+            binmode STDERR, ':utf8';
+            return \*STDERR;
         }
-    )
+
+        # Open
+        my $file = IO::File->new;
+        my $path = $self->path;
+        $file->open(">> $path") or croak qq/Can't open log file "$path": $!/;
+
+        # utf8
+        binmode $file, ':utf8';
+
+        return $file;
+    }
 );
-__PACKAGE__->attr(level => (chained => 1, default => 'debug'));
-__PACKAGE__->attr(path => (chained => 1));
+__PACKAGE__->attr(level => 'debug');
+__PACKAGE__->attr('path');
 
 my $LEVEL = {debug => 1, info => 2, warn => 3, error => 4, fatal => 5};
 
@@ -47,11 +51,11 @@ sub is_level {
     my ($self, $level) = @_;
 
     # Shortcut
-    return 0 unless $level;
+    return unless $level;
 
     # Check
     $level = lc $level;
-    my $current = $self->level;
+    my $current = $ENV{MOJO_LOG_LEVEL} || $self->level;
     return $LEVEL->{$level} >= $LEVEL->{$current};
 }
 
@@ -64,12 +68,15 @@ sub log {
     $level = lc $level;
     return $self unless $level && $self->is_level($level);
 
-    # Write
     my $time = localtime(time);
     my $msgs = join "\n", @msgs;
+
+    # Caller
     my ($pkg, $line) = (caller())[0, 2];
     ($pkg, $line) = (caller(1))[0, 2] if $pkg eq ref $self;
-    $self->handle->syswrite("[$time][$level][$pkg:$line] $msgs\n");
+
+    # Write
+    $self->handle->syswrite("$time $level $pkg:$line [$$]: $msgs\n");
 
     return $self;
 }
@@ -104,41 +111,26 @@ Mojo::Log - Simple Logger For Mojo
 
 =head1 DESCRIPTION
 
-L<Mojo::Log> is a simple logger.
-Include log statements at various levels throughout your code.
-Then when you create the new logging object, set the minimum log level you
-want to keep track off.
-Set it low, to 'debug' for development, then higher in production.
+L<Mojo::Log> is a simple logger for L<Mojo> projects.
 
 =head1 ATTRIBUTES
+
+L<Mojo::Log> implements the following attributes.
 
 =head2 C<handle>
 
     my $handle = $log->handle;
     $log       = $log->handle(IO::File->new);
 
-Returns a IO handle used for logging if called without arguments.
-Returns the invocant if called with arguments.
-Any object with a C<syswrite> method will do.
-
 =head2 C<level>
 
     my $level = $log->level;
     $log      = $log->level('debug');
 
-Returns the minimum logging level if called without arguments.
-Returns the invocant if called with arguments.
-Valid value are: debug, info, warn, error and fatal.
-
 =head2 C<path>
 
     my $path = $log->path
     $log     = $log->path('/var/log/mojo.log');
-
-Returns the path of the log file to write to if called without arguments.
-Returns the invocant if called with arguments.
-This is used as the default location for C<handle>, STDERR will be used if no
-path is provided.
 
 =head1 METHODS
 
@@ -165,51 +157,32 @@ following new ones.
 
     my $is = $log->is_level('debug');
 
-Returns true if the current logging level is at or above this level.
-
 =head2 C<is_debug>
 
     my $is = $log->is_debug;
-
-Returns true if the current logging level is at or above this level.
 
 =head2 C<is_error>
 
     my $is = $log->is_error;
 
-Returns true if the current logging level is at or above this level.
-
 =head2 C<is_fatal>
 
     my $is = $log->is_fatal;
-
-Returns true if the current logging level is at or above this level.
 
 =head2 C<is_info>
 
     my $is = $log->is_info;
 
-Returns true if the current logging level is at or above this level.
-
 =head2 C<is_warn>
 
     my $is = $log->is_warn;
-
-Returns true if the current logging level is at or above this level.
 
 =head2 C<log>
 
     $log = $log->log(debug => 'This should work');
 
-A long-hand alternative to the logging shortcuts above.
-
 =head2 C<warn>
 
     $log = $log->warn('Dont do that Dave...');
-
-=head1 SEE ALSO
-
-L<Log::Dispatch> is an established logger with a similar interface, with many
-more options for logging backends.
 
 =cut

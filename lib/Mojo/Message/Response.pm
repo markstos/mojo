@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package Mojo::Message::Response;
 
@@ -10,7 +10,7 @@ use base 'Mojo::Message';
 use Mojo::Cookie::Response;
 use Mojo::Date;
 
-__PACKAGE__->attr([qw/code message/] => (chained => 1));
+__PACKAGE__->attr([qw/code message/]);
 
 # Umarked codes are from RFC 2616 (mostly taken from LWP)
 my %MESSAGES = (
@@ -71,31 +71,32 @@ my %MESSAGES = (
 sub cookies {
     my $self = shift;
 
-    # Replace cookies
+    # Add cookies
     if (@_) {
-        $self->headers->remove('Set-Cookie');
-        $self->headers->remove('Set-Cookie2');
         for my $cookie (@_) {
-            $self->headers->add_line('Set-Cookie', "$cookie");
+            $cookie = Mojo::Cookie::Response->new($cookie)
+              if ref $cookie eq 'HASH';
+            $self->headers->add('Set-Cookie', "$cookie");
         }
         return $self;
     }
 
     # Set-Cookie2
+    my $cookies = [];
     if (my $cookie2 = $self->headers->set_cookie2) {
-        return Mojo::Cookie::Response->parse($cookie2);
+        push @$cookies, @{Mojo::Cookie::Response->parse($cookie2)};
     }
 
     # Set-Cookie
-    elsif (my $cookie = $self->headers->set_cookie) {
-        return Mojo::Cookie::Response->parse($cookie);
+    if (my $cookie = $self->headers->set_cookie) {
+        push @$cookies, @{Mojo::Cookie::Response->parse($cookie)};
     }
 
     # No cookies
-    return undef;
+    return $cookies;
 }
 
-sub default_message { return $MESSAGES{$_[1] || $_[0]->code || 200} }
+sub default_message { $MESSAGES{$_[1] || $_[0]->code || 200} }
 
 sub fix_headers {
     my $self = shift;
@@ -109,17 +110,39 @@ sub fix_headers {
     return $self;
 }
 
+sub is_status_class {
+    my ($self, $class) = @_;
+    return 1 if ($self->code >= $class && $self->code < ($class + 100));
+    return;
+}
+
 sub parse {
-    my $self = shift;
+    my ($self, $chunk) = @_;
 
     # Buffer
-    $self->buffer->add_chunk(join '', @_) if @_;
+    $self->buffer->add_chunk($chunk) if defined $chunk;
+
+    return $self->_parse(0);
+}
+
+sub parse_until_body {
+    my ($self, $chunk) = @_;
+
+    # Buffer
+    $self->buffer->add_chunk($chunk);
+
+    return $self->_parse(1);
+}
+
+sub _parse {
+    my $self = shift;
+    my $until_body = @_ ? shift : 0;
 
     # Start line
     $self->_parse_start_line if $self->is_state('start');
 
     # Pass through
-    return $self->SUPER::parse();
+    return $self->SUPER::_parse($until_body);
 }
 
 sub _build_start_line {
@@ -158,6 +181,7 @@ sub _parse_start_line {
             $self->major_version(0);
             $self->minor_version(9);
             $self->state('content');
+            $self->content->relaxed(1);
             return 1;
         }
     }
@@ -182,7 +206,7 @@ sub _parse_start_line {
             $self->message($4);
             $self->state('content');
         }
-        else { $self->error('Parser error: Invalid response line') }
+        else { $self->error('Parser error: Invalid response line.') }
     }
 }
 
@@ -234,6 +258,7 @@ implements the following new ones.
 
     my $cookies = $res->cookies;
     $res        = $res->cookies(Mojo::Cookie::Response->new);
+    $req        = $req->cookies({name => 'foo', value => 'bar'});
 
 =head2 C<default_message>
 
@@ -243,8 +268,16 @@ implements the following new ones.
 
     $res = $res->fix_headers;
 
+=head2 C<is_status_class>
+
+    my $is_2xx = $res->is_status_class(200);
+
 =head2 C<parse>
 
     $res = $res->parse('HTTP/1.1 200 OK');
+
+=head2 C<parse_until_body>
+
+    $res = $res->parse_until_body('HTTP/1.1 200 OK');
 
 =cut

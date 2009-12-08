@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package Mojo;
 
@@ -7,31 +7,58 @@ use warnings;
 
 use base 'Mojo::Base';
 
-# No imports to make subclassing a bit easier
-require Carp;
-
+use Carp 'croak';
+use Mojo::Client;
+use Mojo::Commands;
 use Mojo::Home;
 use Mojo::Log;
-use Mojo::Transaction;
+use Mojo::Transaction::Single;
 
-__PACKAGE__->attr(home => (chained => 1, default => sub { Mojo::Home->new }));
-__PACKAGE__->attr(log  => (chained => 1, default => sub { Mojo::Log->new }));
+__PACKAGE__->attr(
+    build_tx_cb => sub {
+        sub {
+            my $tx = Mojo::Transaction::Single->new;
+            $tx->res->headers->header('X-Powered-By' => 'Mojo (Perl)');
+            return $tx;
+          }
+    }
+);
+__PACKAGE__->attr(client => sub { Mojo::Client->new });
+__PACKAGE__->attr(home   => sub { Mojo::Home->new });
+__PACKAGE__->attr(log    => sub { Mojo::Log->new });
 
 # Oh, so they have internet on computers now!
-our $VERSION = '0.9001';
+our $VERSION = '0.999914';
 
 sub new {
-    my $self = shift->SUPER::new();
+    my $self = shift->SUPER::new(@_);
+
+    # Home
+    $self->home->detect(ref $self);
 
     # Log directory
-    $self->log->path($self->home->rel_file('log/mojo.log'));
+    $self->log->path($self->home->rel_file('log/mojo.log'))
+      if -w $self->home->rel_file('log');
 
     return $self;
 }
 
-sub build_tx { return Mojo::Transaction->new }
+# Bart, stop pestering Satan!
+sub handler { croak 'Method "handler" not implemented in subclass' }
 
-sub handler { Carp::croak('Method "handler" not implemented in subclass') }
+# Start command system
+sub start {
+    my $class = shift;
+
+    # We can be called on class or instance
+    $class = ref $class || $class;
+
+    # We are the application
+    $ENV{MOJO_APP} ||= $class;
+
+    # Start!
+    Mojo::Commands->start(@_);
+}
 
 1;
 __END__
@@ -44,35 +71,59 @@ Mojo - The Web In A Box!
 
     use base 'Mojo';
 
+    # All the complexities of CGI, FastCGI and HTTP get reduced to a
+    # single method call!
     sub handler {
         my ($self, $tx) = @_;
 
-        # Hello world!
-        $tx->res->code(200);
-        $tx->res->headers->content_type('text/plain');
-        $tx->res->body('Congratulations, your Mojo is working!');
+        # Request
+        my $method = $tx->req->method;
+        my $path   = $tx->req->url->path;
 
-        return $tx;
+        # Response
+        $tx->res->headers->content_type('text/plain');
+        $tx->res->body("$method request for $path!");
     }
 
 =head1 DESCRIPTION
 
-L<Mojo> is a collection of libraries and example web frameworks for web
-framework developers.
+L<Mojo> provides a minimal interface between web servers and Perl web
+frameworks.
 
-If you are searching for a higher level MVC web framework you should take a
-look at L<Mojolicious>.
+Also included in the distribution are two MVC web frameworks named
+L<Mojolicious> and L<Mojolicious::Lite>.
 
-Don't be scared by the amount of different modules in the distribution, they
-are all very loosely coupled.
-You can just pick the ones you like and ignore the rest, there is no
-tradeoff.
+Currently there are no requirements besides Perl 5.8.1.
 
-For userfriendly documentation see L<Mojo::Manual>.
+    .------------------------------------------------------------.
+    |                                                            |
+    |   Application  .-------------------------------------------'
+    |                | .-------------------. .-------------------.
+    |                | |    Mojolicious    | | Mojolicious::Lite |
+    '----------------' '-------------------' '-------------------'
+    .------------------------------------------------------------.
+    |                           Mojo                             |
+    '------------------------------------------------------------'
+    .------------------. .------------------. .------------------.
+    |        CGI       | |      FastCGI     | |     HTTP 1.1     |
+    '------------------' '------------------' '------------------'
+
+For user friendly documentation see L<Mojolicious::Book> and
+L<Mojolicious::Lite>.
 
 =head1 ATTRIBUTES
 
 L<Mojo> implements the following attributes.
+
+=head2 C<build_tx_cb>
+
+    my $cb = $mojo->build_tx_cb;
+    $mojo  = $mojo->build_tx_cb(sub { ... });
+
+=head2 C<client>
+
+    my $client = $mojo->client;
+    $mojo      = $mojo->client(Mojo::Client->new);
 
 =head2 C<home>
 
@@ -93,32 +144,14 @@ new ones.
 
     my $mojo = Mojo->new;
 
-Returns a new L<Mojo> object.
-
-=head2 C<build_tx>
-
-    my $tx = $mojo->build_tx;
-
-Returns a new L<Mojo::Transaction> object;
-Meant to be overloaded in subclasses.
-
 =head2 C<handler>
 
     $tx = $mojo->handler($tx);
 
-Returns and takes a L<Mojo::Transaction> object as first argument.
-Meant to be overloaded in subclasses.
+=head2 C<start>
 
-    sub handler {
-        my ($self, $tx) = @_;
-
-        # Hello world!
-        $tx->res->code(200);
-        $tx->res->headers->content_type('text/plain');
-        $tx->res->body('Congratulations, your Mojo is working!');
-
-        return $tx;
-    }
+    Mojo->start;
+    Mojo->start('daemon');
 
 =head1 SUPPORT
 
@@ -152,7 +185,17 @@ Sebastian Riedel, C<sri@cpan.org>.
 
 In alphabetical order:
 
-Andreas Koenig.
+Adam Kennedy
+
+Adriano Ferreira
+
+Alexey Likhatskiy
+
+Anatoly Sharifulin
+
+Andre Vieth
+
+Andreas Koenig
 
 Andy Grundman
 
@@ -164,41 +207,69 @@ Audrey Tang
 
 Breno G. de Oliveira
 
+Burak Gursoy
+
 Ch Lamprecht
 
 Christian Hansen
+
+David Davis
 
 Gisle Aas
 
 Graham Barr
 
+James Duncan
+
+Jaroslav Muhin
+
 Jesse Vincent
+
+Kazuhiro Shibuya
+
+Kevin Old
 
 Lars Balker Rasmussen
 
 Leon Brocard
 
+Maik Fischer
+
 Marcus Ramberg
 
 Mark Stosberg
 
+Maksym Komar
+
+Pascal Gaudette
+
 Pedro Melo
+
+Pierre-Yves Ritschard
+
+Rafal Pocztarski
+
+Randal Schwartz
 
 Robert Hicks
 
 Shu Cho
 
+Stanis Trendelenburg
+
+Tatsuhiko Miyagawa
+
 Uwe Voelker
 
-vti
+Viacheslav Tikhanovskii
 
-And thanks to everyone else i might have forgotten. (Please send me a mail)
+Yuki Kimoto
 
-=head1 COPYRIGHT
+=head1 COPYRIGHT AND LICENSE
 
-Copyright (C) 2008, Sebastian Riedel.
+Copyright (C) 2008-2009, Sebastian Riedel.
 
 This program is free software, you can redistribute it and/or modify it under
-the same terms as Perl 5.10.
+the terms of the Artistic License version 2.0.
 
 =cut

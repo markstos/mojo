@@ -1,6 +1,6 @@
-#!perl
+#!/usr/bin/env perl
 
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 use strict;
 use warnings;
@@ -11,7 +11,6 @@ use File::Spec;
 use File::Temp;
 use Mojo::Client;
 use Mojo::Template;
-use Mojo::Transaction;
 use Test::Mojo::Server;
 
 plan skip_all => 'set TEST_APACHE to enable this test (developer only!)'
@@ -32,7 +31,7 @@ my $mt     = Mojo::Template->new;
 
 $mt->render_to_file(<<'EOF', $config, $dir, $port);
 % my ($dir, $port) = @_;
-% use File::Spec::Functions 'catfile'
+% use File::Spec::Functions 'catfile';
 ServerName 127.0.0.1
 Listen <%= $port %>
 
@@ -76,12 +75,14 @@ ok(-x $cgi);
 $server->start_server_ok;
 
 # Request
-my $tx =
-  Mojo::Transaction->new_get("http://127.0.0.1:$port/cgi-bin/test.cgi");
 my $client = Mojo::Client->new;
-$client->process_all($tx);
-is($tx->res->code, 200);
-like($tx->res->body, qr/Mojo is working/);
+$client->get(
+    "http://127.0.0.1:$port/cgi-bin/test.cgi" => sub {
+        my ($self, $tx) = @_;
+        is($tx->res->code, 200);
+        like($tx->res->body, qr/Mojo is working/);
+    }
+)->process;
 
 # Stop
 $server->stop_server_ok;

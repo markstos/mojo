@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package Mojo::Message::Request;
 
@@ -10,18 +10,26 @@ use base 'Mojo::Message';
 use Mojo::Cookie::Request;
 use Mojo::Parameters;
 
-__PACKAGE__->attr(method => (chained => 1, default => 'GET'));
-__PACKAGE__->attr(url => (chained => 1, default => sub { Mojo::URL->new }));
+__PACKAGE__->attr(method => 'GET');
+__PACKAGE__->attr(url => sub { Mojo::URL->new });
+
+__PACKAGE__->attr('_params');
 
 sub cookies {
     my $self = shift;
 
-    # Replace cookies
+    # Add cookies
     if (@_) {
         my $cookies = shift;
+        $cookies = Mojo::Cookie::Request->new($cookies)
+          if ref $cookies eq 'HASH';
         $cookies = $cookies->to_string_with_prefix;
-        for my $cookie (@_) { $cookies .= "; $cookie" }
-        $self->headers->header('Cookie', $cookies);
+        for my $cookie (@_) {
+            $cookie = Mojo::Cookie::Request->new($cookie)
+              if ref $cookie eq 'HASH';
+            $cookies .= "; $cookie";
+        }
+        $self->headers->add('Cookie', $cookies);
         return $self;
     }
 
@@ -31,7 +39,7 @@ sub cookies {
     }
 
     # No cookies
-    return undef;
+    return [];
 }
 
 sub fix_headers {
@@ -47,23 +55,13 @@ sub fix_headers {
         $self->headers->host($host) unless $self->headers->host;
     }
 
-    # Proxy-Authorization header
-    if ((my $proxy = $self->proxy) && !$self->headers->proxy_authorization) {
-
-        # Basic proxy authorization
-        if (my $userinfo = $proxy->userinfo) {
-            my $auth = Mojo::ByteStream->new("$userinfo")->b64_encode;
-            $self->headers->proxy_authorization("Basic $auth");
-        }
-    }
-
     return $self;
 }
 
 sub param {
     my $self = shift;
-    $self->{params} ||= $self->params;
-    return $self->{params}->param(@_);
+    $self->_params($self->params) unless $self->_params;
+    return $self->_params->param(@_);
 }
 
 sub params {
@@ -76,11 +74,14 @@ sub params {
 sub parse {
     my $self = shift;
 
-    # CGI like environment
-    $self->_parse_env(shift) if ref $_[0] eq 'HASH';
+    # CGI like environment?
+    my $env;
+    if   (exists $_[1]) { $env = {@_} }
+    else                { $env = $_[0] if ref $_[0] eq 'HASH' }
 
-    # Buffer
-    $self->buffer->add_chunk(join '', @_) if @_;
+    # Parse CGI like environment or add chunk
+    my $chunk = shift;
+    $env ? $self->_parse_env($env) : $self->buffer->add_chunk($chunk);
 
     # Start line
     $self->_parse_start_line if $self->is_state('start');
@@ -93,8 +94,10 @@ sub parse {
 
         # Base URL
         $self->url->base->scheme('http') unless $self->url->base->scheme;
-        $self->url->base->authority($self->headers->host)
-          if !$self->url->base->authority && $self->headers->host;
+        if (!$self->url->base->authority && $self->headers->host) {
+            my $host = $self->headers->host;
+            $self->url->base->authority($host);
+        }
     }
 
     return $self;
@@ -115,15 +118,10 @@ sub proxy {
         return $self;
     }
 
-    # Environment
-    elsif (!$self->{proxy} && $ENV{HTTP_PROXY}) {
-        $self->{proxy} = Mojo::URL->new($ENV{HTTP_PROXY});
-    }
-
     return $self->{proxy};
 }
 
-sub query_params { return shift->url->query }
+sub query_params { shift->url->query }
 
 sub _build_start_line {
     my $self = shift;
@@ -150,10 +148,11 @@ sub _parse_env {
     my ($self, $env) = @_;
     $env ||= \%ENV;
 
+    # Headers
     for my $name (keys %{$env}) {
         my $value = $env->{$name};
 
-        # Headers
+        # Header
         if ($name =~ s/^HTTP_//i) {
             $name =~ s/_/-/g;
             $self->headers->header($name, $value);
@@ -174,42 +173,96 @@ sub _parse_env {
                 $self->url->base->port($port);
             }
         }
+    }
 
-        # Content-Type is a special case on some servers
-        elsif ($name eq 'CONTENT_TYPE') {
-            $self->headers->content_type($value);
+    # Content-Type is a special case on some servers
+    if (my $value = $env->{CONTENT_TYPE}) {
+        $self->headers->content_type($value);
+    }
+
+    # Content-Length is a special case on some servers
+    if (my $value = $env->{CONTENT_LENGTH}) {
+        $self->headers->content_length($value);
+    }
+
+    # Path is a special case on some servers
+    if (my $value = $env->{REQUEST_URI}) { $self->url->parse($value) }
+
+    # Query
+    if (my $value = $env->{QUERY_STRING}) { $self->url->query->parse($value) }
+
+    # Method
+    if (my $value = $env->{REQUEST_METHOD}) { $self->method($value) }
+
+    # Scheme/Version
+    if (my $value = $env->{SERVER_PROTOCOL}) {
+        $value =~ /^([^\/]*)\/*(.*)$/;
+        $self->url->scheme($1)       if $1;
+        $self->url->base->scheme($1) if $1;
+        $self->version($2)           if $2;
+    }
+
+    # Base path
+    if (my $value = $env->{SCRIPT_NAME}) {
+
+        # Make sure there is a trailing slash (important for merging)
+        $value .= '/' unless $value =~ /\/$/;
+
+        $self->url->base->path->parse($value);
+    }
+
+    # Path
+    if (my $value = $env->{PATH_INFO}) { $self->url->path->parse($value) }
+
+    # Fix paths
+    my $base = $self->url->base->path->to_string;
+    my $path = $self->url->path->to_string;
+
+    # IIS is so fucked up, nobody should ever have to use it...
+    my $software = $env->{SERVER_SOFTWARE} || '';
+    if ($software =~ /IIS\/\d+/ && $base =~ /^$path\/?$/) {
+
+        # This is a horrible hack, just like IIS itself
+        if (my $t = $env->{PATH_TRANSLATED}) {
+            my @p = split /\//,    $path;
+            my @t = split /\\\\?/, $t;
+
+            # Try to generate correct PATH_INFO and SCRIPT_NAME
+            my @n;
+            while ($p[$#p] eq $t[$#t]) {
+                pop @t;
+                unshift @n, pop @p;
+            }
+            unshift @n, '', '';
+
+            $base = join '/', @p;
+            $path = join '/', @n;
+
+            $self->url->base->path->parse($base);
+            $self->url->path->parse($path);
         }
+    }
 
-        # Content-Length is a special case on some servers
-        elsif ($name eq 'CONTENT_LENGTH') {
-            $self->headers->content_length($value);
-        }
+    # Fix paths for normal screwed up CGI environments
+    if ($path && $base) {
 
-        # Path
-        elsif ($name eq 'PATH_INFO') {
-            $self->url->path->parse($value);
-        }
+        # Path ends with a slash?
+        my $slash;
+        $slash = 1 if $path =~ /\/$/;
 
-        # Query
-        elsif ($name eq 'QUERY_STRING') {
-            $self->url->query->parse($value);
-        }
+        # Make sure path has a slash, because base has one
+        $path .= '/' unless $slash;
 
-        # Method
-        elsif ($name eq 'REQUEST_METHOD') { $self->method($value) }
+        # Remove SCRIPT_NAME prefix if it's there
+        $path =~ s/^$base//;
 
-        # Base path
-        elsif ($name eq 'SCRIPT_NAME') {
-            $self->url->base->path->parse($value);
-        }
+        # Remove unwanted trailing slash
+        $path =~ s/\/$// unless $slash;
 
-        # Scheme/Version
-        elsif ($name eq 'SERVER_PROTOCOL') {
-            $value =~ /^([^\/]*)\/*(.*)$/;
-            $self->url->scheme($1)       if $1;
-            $self->url->base->scheme($1) if $1;
-            $self->version($2)           if $2;
-        }
+        # Make sure we have a leading slash
+        $path = "/$path" if $path && $path !~ /^\//;
+
+        $self->url->path->parse($path);
     }
 
     # There won't be a start line or header when you parse environment
@@ -223,8 +276,14 @@ sub _parse_env {
 sub _parse_start_line {
     my $self = shift;
 
-    # We have a full request line
     my $line = $self->buffer->get_line;
+
+    # Ignore any leading empty lines
+    while ((defined $line) && ($line =~ m/^\s*$/)) {
+        $line = $self->buffer->get_line;
+    }
+
+    # We have a (hopefully) full request line
     if (defined $line) {
         if ($line =~ /
             ^\s*                                                          # Start
@@ -249,9 +308,13 @@ sub _parse_start_line {
                 $self->major_version(0);
                 $self->minor_version(9);
                 $self->done;
+
+                # HTTP 0.9 has no headers or body and does not support
+                # pipelining
+                $self->buffer->empty;
             }
         }
-        else { $self->error('Parser error: Invalid request line') }
+        else { $self->error('Parser error: Invalid request line.') }
     }
 }
 
@@ -292,14 +355,9 @@ implements the following new ones.
 
     my $params = $req->params;
 
-Returns a L<Mojo::Parameters> object, containing both GET and POST
-parameters.
-
 =head2 C<query_params>
 
     my $params = $req->query_params;
-
-Returns a L<Mojo::Parameters> object, containing GET parameters.
 
 =head2 C<url>
 
@@ -315,6 +373,7 @@ implements the following new ones.
 
     my $cookies = $req->cookies;
     $req        = $req->cookies(Mojo::Cookie::Request->new);
+    $req        = $req->cookies({name => 'foo', value => 'bar'});
 
 =head2 C<fix_headers>
 
@@ -327,6 +386,7 @@ implements the following new ones.
 =head2 C<parse>
 
     $req = $req->parse('GET /foo/bar HTTP/1.1');
+    $req = $req->parse(REQUEST_METHOD => 'GET');
     $req = $req->parse({REQUEST_METHOD => 'GET'});
 
 =head2 C<proxy>
@@ -334,11 +394,5 @@ implements the following new ones.
     my $proxy = $req->proxy;
     $req      = $req->proxy('http://foo:bar@127.0.0.1:3000');
     $req      = $req->proxy( Mojo::URL->new('http://127.0.0.1:3000')  );
-
-Returns a L<Mojo::URL> object representing the HTTP proxy to be used if
-called without arguments.
-Returns the invocant if called with arguments.
-Expects a L<Mojo::URL> object or a string.
-Defaults to the C<HTTP_PROXY> environment variable.
 
 =cut

@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package Mojo::Message;
 
@@ -10,33 +10,19 @@ use overload '""' => sub { shift->to_string }, fallback => 1;
 use bytes;
 
 use Carp 'croak';
+use Mojo::Asset::Memory;
 use Mojo::Buffer;
-use Mojo::ByteStream;
-use Mojo::Content;
-use Mojo::File::Memory;
+use Mojo::Content::Single;
 use Mojo::Parameters;
 use Mojo::Upload;
-use Mojo::URL;
 
-__PACKAGE__->attr(
-    buffer => (
-        chained => 1,
-        default => sub { Mojo::Buffer->new }
-    )
-);
-__PACKAGE__->attr([qw/parser_progress_cb/] => (chained => 1));
-__PACKAGE__->attr(
-    content => (
-        chained => 1,
-        default => sub { Mojo::Content->new }
-    )
-);
-__PACKAGE__->attr(
-    [qw/major_version minor_version/] => (
-        chained => 1,
-        default => 1
-    )
-);
+use constant CHUNK_SIZE => $ENV{MOJO_CHUNK_SIZE} || 4096;
+
+__PACKAGE__->attr(buffer  => sub { Mojo::Buffer->new });
+__PACKAGE__->attr(content => sub { Mojo::Content::Single->new });
+__PACKAGE__->attr([qw/major_version minor_version/] => 1);
+
+__PACKAGE__->attr([qw/_body_params _cookies _uploads/]);
 
 # I'll keep it short and sweet. Family. Religion. Friendship.
 # These are the three demons you must slay if you wish to succeed in
@@ -46,66 +32,72 @@ sub at_least_version {
     my ($major, $minor) = split /\./, $version;
 
     # Version is equal or newer
-    return 1 if $major > $self->major_version;
+    return 1 if $major < $self->major_version;
     if ($major == $self->major_version) {
         return 1 if $minor <= $self->minor_version;
     }
 
     # Version is older
-    return 0;
+    return;
 }
 
 sub body {
-    my ($self, $content) = @_;
+    my $self = shift;
 
-    # Plain old content
-    unless ($self->is_multipart) {
+    # Downgrade multipart content
+    $self->content(Mojo::Content::Single->new)
+      if $self->content->isa('Mojo::Content::MultiPart');
 
-        # Callback
-        if ($content && ref $content eq 'CODE') {
-            $self->body_cb($content);
-            return $content;
-        }
-
-        # Get/Set content
-        elsif ($content) {
-            $self->content->file(Mojo::File::Memory->new);
-            $self->content->file->add_chunk($content);
-        }
-        return $self->content->file->slurp;
+    # Get
+    unless (@_) {
+        return $self->body_cb
+          ? $self->body_cb
+          : return $self->content->asset->slurp;
     }
 
-    $self->content($content);
-    return $self->content;
+    # New content
+    my $content = shift;
+
+    # Cleanup
+    $self->body_cb(undef);
+    $self->content->asset(Mojo::Asset::Memory->new);
+
+    # Shortcut
+    return $self unless defined $content;
+
+    # Callback
+    if (ref $content eq 'CODE') { $self->body_cb($content) }
+
+    # Set text content
+    elsif (length $content) { $self->content->asset->add_chunk($content) }
+
+    return $self;
 }
 
 sub body_cb { shift->content->body_cb(@_) }
-
-sub body_length { shift->content->body_length }
 
 sub body_params {
     my $self = shift;
 
     # Cached
-    return $self->{_body_params} if $self->{_body_params};
+    return $self->_body_params if $self->_body_params;
 
     my $params = Mojo::Parameters->new;
+    my $type = $self->headers->content_type || '';
+
+    # Charset
+    $type =~ /charset=\"?(\S+)\"?/;
+    $params->charset($1) if $1;
 
     # "x-application-urlencoded" and "application/x-www-form-urlencoded"
-    my $content_type = $self->headers->content_type || '';
-    if ($content_type
-        =~ /(?:x-application|application\/x-www-form)-urlencoded/i)
-    {
+    if ($type =~ /(?:x-application|application\/x-www-form)-urlencoded/i) {
 
         # Parse
-        my $raw = $self->content->file->slurp;
-        $params->parse($raw);
-
-        return $params;
+        $params->parse($self->content->asset->slurp);
     }
 
     # "multipart/formdata"
-    elsif ($content_type =~ /multipart\/form-data/i) {
+    elsif ($type =~ /multipart\/form-data/i) {
         my $formdata = $self->_parse_formdata;
 
         # Formdata
@@ -114,13 +106,16 @@ sub body_params {
             my $filename = $data->[1];
             my $part     = $data->[2];
 
-            $params->append($name, $part->file->slurp) unless $filename;
+            # Form field
+            $params->append($name, $part->asset->slurp) unless $filename;
         }
     }
 
     # Cache
-    return $self->{_body_params} = $params;
+    return $self->_body_params($params)->_body_params;
 }
+
+sub body_size { shift->content->body_size }
 
 sub build {
     my $self    = shift;
@@ -178,22 +173,20 @@ sub build_start_line {
     return $startline;
 }
 
-sub builder_progress_cb { shift->content->builder_progress_cb(@_) }
-
 sub cookie {
     my ($self, $name) = @_;
 
     # Shortcut
-    return undef unless $name;
+    return unless $name;
 
     # Map
-    unless ($self->{_cookies}) {
+    unless ($self->_cookies) {
         my $cookies = {};
         for my $cookie (@{$self->cookies}) {
             my $cname = $cookie->name;
 
             # Multiple cookies with same name
-            if (exists $cookies->{$name}) {
+            if (exists $cookies->{$cname}) {
                 $cookies->{$cname} = [$cookies->{$cname}]
                   unless ref $cookies->{$cname} eq 'ARRAY';
                 push @{$cookies->{$cname}}, $cookie;
@@ -204,22 +197,28 @@ sub cookie {
         }
 
         # Cache
-        $self->{_cookies} = $cookies;
+        $self->_cookies($cookies);
     }
 
+    # Multiple?
     my @cookies =
-      ref $self->{_cookies}->{$name} eq 'ARRAY'
-      ? @{$self->{_cookies}->{$name}}
-      : ($self->{_cookies}->{$name});
+      ref $self->_cookies->{$name} eq 'ARRAY'
+      ? @{$self->_cookies->{$name}}
+      : ($self->_cookies->{$name});
+
+    # Context?
     return wantarray ? @cookies : $cookies[0];
 }
 
 sub fix_headers {
     my $self = shift;
 
-    # Content-Length header is required in HTTP 1.0 messages
+    # Content-Length header is required in HTTP 1.0 (and above) messages if
+    # there's a body, sadly many clients are expecting broken server behavior
+    # if the Content-Length header is missing, so we are defaulting to
+    # "Content-Length: 0" which has proven to just work in the real world
     if ($self->at_least_version('1.0') && !$self->is_chunked) {
-        $self->headers->content_length($self->body_length)
+        $self->headers->content_length($self->body_size)
           unless $self->headers->content_length;
     }
 
@@ -232,8 +231,7 @@ sub get_header_chunk {
     my $self = shift;
 
     # Progress
-    $self->builder_progress_cb->($self, 'headers', @_)
-      if $self->builder_progress_cb;
+    $self->progress_cb->($self, 'headers', @_) if $self->progress_cb;
 
     # HTTP 0.9 has no headers
     return '' if $self->version eq '0.9';
@@ -248,20 +246,21 @@ sub get_start_line_chunk {
     my ($self, $offset) = @_;
 
     # Progress
-    $self->builder_progress_cb->($self, 'start_line', $offset)
-      if $self->builder_progress_cb;
+    $self->progress_cb->($self, 'start_line', $offset) if $self->progress_cb;
 
     my $copy = $self->_build_start_line;
-    return substr($copy, $offset, 4096);
+    return substr($copy, $offset, CHUNK_SIZE);
 }
 
-sub header_length {
+sub has_leftovers { shift->content->has_leftovers }
+
+sub header_size {
     my $self = shift;
 
     # Fix headers
     $self->fix_headers;
 
-    return $self->content->header_length;
+    return $self->content->header_size;
 }
 
 sub headers { shift->content->headers(@_) }
@@ -270,37 +269,35 @@ sub is_chunked { shift->content->is_chunked }
 
 sub is_multipart { shift->content->is_multipart }
 
+sub leftovers { shift->content->leftovers }
+
 sub param {
     my $self = shift;
     $self->{body_params} ||= $self->body_params;
     return $self->{body_params}->param(@_);
 }
 
-# Please don't eat me! I have a wife and kids. Eat them!
 sub parse {
-    my $self = shift;
+    my ($self, $chunk) = @_;
 
     # Buffer
-    $self->buffer->add_chunk(join '', @_) if @_;
+    $self->buffer->add_chunk($chunk) if defined $chunk;
 
-    # Progress
-    $self->parser_progress_cb->($self) if $self->parser_progress_cb;
-
-    # Content
-    if ($self->is_state(qw/content done/)) {
-        my $content = $self->content;
-        $content->state('body') if $self->version eq '0.9';
-        $content->filter_buffer($self->buffer);
-        $self->content($content->parse);
-    }
-
-    # Done
-    $self->done if $self->content->is_done;
-
-    return $self;
+    return $self->_parse(0);
 }
 
-sub start_line_length { return length shift->build_start_line }
+sub parse_until_body {
+    my ($self, $chunk) = @_;
+
+    # Buffer
+    $self->buffer->add_chunk($chunk);
+
+    return $self->_parse(1);
+}
+
+sub progress_cb { shift->content->progress_cb(@_) }
+
+sub start_line_size { length shift->build_start_line }
 
 sub to_string { shift->build(@_) }
 
@@ -308,10 +305,10 @@ sub upload {
     my ($self, $name) = @_;
 
     # Shortcut
-    return undef unless $name;
+    return unless $name;
 
     # Map
-    unless ($self->{_uploads}) {
+    unless ($self->_uploads) {
         my $uploads = {};
         for my $upload (@{$self->uploads}) {
             my $uname = $upload->name;
@@ -328,13 +325,13 @@ sub upload {
         }
 
         # Cache
-        $self->{_uploads} = $uploads;
+        $self->_uploads($uploads);
     }
 
     my @uploads =
-      ref $self->{_uploads}->{$name} eq 'ARRAY'
-      ? @{$self->{_uploads}->{$name}}
-      : ($self->{_uploads}->{$name});
+      ref $self->_uploads->{$name} eq 'ARRAY'
+      ? @{$self->_uploads->{$name}}
+      : ($self->_uploads->{$name});
     return wantarray ? @uploads : $uploads[0];
 }
 
@@ -356,7 +353,7 @@ sub uploads {
 
         my $upload = Mojo::Upload->new;
         $upload->name($name);
-        $upload->file($part->file);
+        $upload->asset($part->asset);
         $upload->filename($filename);
         $upload->headers($part->headers);
 
@@ -388,6 +385,43 @@ sub version {
 
 sub _build_start_line {
     croak 'Method "_build_start_line" not implemented by subclass';
+}
+
+sub _parse {
+    my $self = shift;
+    my $until_body = @_ ? shift : 0;
+
+    # Progress
+    $self->progress_cb->($self) if $self->progress_cb;
+
+    # Content
+    if ($self->is_state(qw/content done done_with_leftovers/)) {
+        my $content = $self->content;
+
+        # HTTP 0.9 has no headers
+        $content->state('body') if $self->version eq '0.9';
+
+        # Parse
+        $content->filter_buffer($self->buffer);
+
+        # Until body
+        if ($until_body) { $self->content($content->parse_until_body) }
+
+        # Whole message
+        else { $self->content($content->parse) }
+
+        # HTTP 0.9 has no defined length
+        $content->state('done') if $self->version eq '0.9';
+    }
+
+    # Done
+    $self->done if $self->content->is_done;
+
+    # Done with leftovers, maybe pipelined
+    $self->state('done_with_leftovers')
+      if $self->content->is_state('done_with_leftovers');
+
+    return $self;
 }
 
 sub _parse_formdata {
@@ -456,31 +490,15 @@ implements the following new ones.
         return $chunk;
     });
 
-=head2 C<body_length>
-
-    my $body_length = $message->body_length;
-
 =head2 C<buffer>
 
     my $buffer = $message->buffer;
     $message   = $message->buffer(Mojo::Buffer->new);
 
-=head2 C<builder_progress_cb>
-
-    my $cb   = $message->builder_progress_cb;
-    $message = $message->builder_progress_cb(sub {
-        my $self = shift;
-        print '+';
-    });
-
 =head2 C<content>
 
     my $content = $message->content;
-    $message    = $message->content(Mojo::Content->new);
-
-=head2 C<header_length>
-
-    my $header_length = $message->header_length;
+    $message    = $message->content(Mojo::Content::Single->new);
 
 =head2 C<headers>
 
@@ -492,42 +510,27 @@ implements the following new ones.
     my $major_version = $message->major_version;
     $message          = $message->major_version(1);
 
-Returns the major version of the HTTP specification being followed.
-Defaults to 1.
-
 =head2 C<minor_version>
 
     my $minor_version = $message->minor_version;
     $message          = $message->minor_version(1);
 
-Returns the minor version of the HTTP specification being followed.
-Defaults to 1.
+=head2 C<progress_cb>
 
-=head2 C<parser_progress_cb>
-
-    my $cb   = $message->parser_progress_cb;
-    $message = $message->parser_progress_cb(sub {
+    my $cb   = $message->progress_cb;
+    $message = $message->progress_cb(sub {
         my $self = shift;
         print '+';
     });
-
-=head2 C<raw_body_length>
-
-    my $raw_body_length = $message->raw_body_length;
-
-=head2 C<start_line_length>
-
-    my $start_line_length = $message->start_line_length;
-
-=head2 C<version>
-
-    my $version = $message->version;
-    $message    = $message->version('1.1');
 
 =head1 METHODS
 
 L<Mojo::Message> inherits all methods from L<Mojo::Stateful> and implements
 the following new ones.
+
+=head2 C<at_least_version>
+
+    my $success = $message->at_least_version('1.1');
 
 =head2 C<body>
 
@@ -548,7 +551,9 @@ the following new ones.
 
     my $params = $message->body_params;
 
-Returns a L<Mojo::Parameters> object, containing POST parameters.
+=head2 C<body_size>
+
+    my $size = $message->body_size;
 
 =head2 C<to_string>
 
@@ -556,25 +561,17 @@ Returns a L<Mojo::Parameters> object, containing POST parameters.
 
     my $string = $message->build;
 
-Returns the complete HTTP message.
-
 =head2 C<build_body>
 
     my $string = $message->build_body;
-
-Returns the HTTP message body.
 
 =head2 C<build_headers>
 
     my $string = $message->build_headers;
 
-Returns the HTTP message headers.
-
 =head2 C<build_start_line>
 
     my $string = $message->build_start_line;
-
-Returns the HTTP start line.
 
 =head2 C<cookie>
 
@@ -584,9 +581,6 @@ Returns the HTTP start line.
 =head2 C<fix_headers>
 
     $message = $message->fix_headers;
-
-Returns the invocant and makes sure all required headers for the currently
-followed HTTP version are set.
 
 =head2 C<get_body_chunk>
 
@@ -600,20 +594,25 @@ followed HTTP version are set.
 
     my $string = $message->get_start_line_chunk($offset);
 
+=head2 C<has_leftovers>
+
+    my $leftovers = $message->has_leftovers;
+
+=head2 C<header_size>
+
+    my $size = $message->header_size;
+
 =head2 C<is_chunked>
 
-    my $is_chunked = $message->is_chunked;
+    my $chunked = $message->is_chunked;
 
 =head2 C<is_multipart>
 
-    my $is_multipart = $message->is_multipart;
+    my $multipart = $message->is_multipart;
 
-=head2 C<at_least_version>
+=head2 C<leftovers>
 
-    my $success = $message->at_least_version('1.1');
-
-Returns true if the HTTP version is greater than or equal to the version
-passed in.
+    my $bytes = $message->leftovers;
 
 =head2 C<param>
 
@@ -624,17 +623,26 @@ passed in.
 
     $message = $message->parse('HTTP/1.1 200 OK...');
 
+=head2 C<parse_until_body>
+
+    $message = $message->parse_until_body('HTTP/1.1 200 OK...');
+
+=head2 C<start_line_size>
+
+    my $size = $message->start_line_size;
+
 =head2 C<upload>
 
     my $upload  = $message->upload('foo');
     my @uploads = $message->upload('foo');
 
-Returns a L<Mojo::Upload> object or a arrayref of L<Mojo::Upload> objects.
-
 =head2 C<uploads>
 
     my $uploads = $message->uploads;
 
-Returns a arrayref of L<Mojo::Upload> objects.
+=head2 C<version>
+
+    my $version = $message->version;
+    $message    = $message->version('1.1');
 
 =cut

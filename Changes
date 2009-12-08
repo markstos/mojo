@@ -1,7 +1,439 @@
 This file documents the revision history for Perl extension Mojo.
 
-0.9001  2008-12-01 00:00:00
-        - Updated error handling in MojoX::Dispatcher::Static. (Mark Stosberg, Sebastian Riedel)
+0.999914 2009-11-24 00:00:00
+        - Added encoding support to post_form_ok in Test::Mojo.
+        - Made cookies easier to set.
+        - Fixed body_contains in Mojo::Content::Single. (yuki-kimoto)
+        - Fixed utf8 output in STDERR log. (vti)
+
+0.999913 2009-11-24 00:00:00
+        - Added automatic content decoding to content helpers in Test::Mojo.
+        - Added json test helper to Test::Mojo.
+        - Added the ability to reset a test session in Test::Mojo.
+          (yuki-kimoto)
+        - Fixed Mojolicious::Renderer to always default to rendering a 404
+          error.
+        - Fixed a cookiejar bug and added tests. (yuki-kimoto)
+
+0.999912 2009-11-24 00:00:00
+        - Improved ioloop performance. (gbarr)
+
+0.999911 2009-11-14 00:00:00
+        - Added template inheritance to Mojolicious.
+        - Added block and capturing support to Mojo::Template.
+        - Added trimming support to Mojo::Template.
+        - Added new testing framework for Mojo and Mojolicious applications.
+          (yuki-kimoto)
+        - Added redirect support to Mojo::Client. (acajou)
+        - Added cookie jar to Mojo::Client. (acajou)
+        - Excluded Mojo::ByteStream objects from auto escaping.
+        - Updated Mojolicious::Lite tutorial.
+        - Fixed a case where routes captures got false positives.
+        - Fixed literal name handling in Mojo::JSON. (rsp)
+        - Fixed unicode detection in Mojo::JSON. (rsp)
+        - Fixed multiple small bugs in Mojo::JSON. (rsp)
+        - Fixed Mojolicious default app tests. (yuki-kimoto)
+        - Fixed Mojo::Server::FCGI compatibility.
+
+0.999910 2009-11-14 00:00:00
+        - Fixed url_for without endpoint bug.
+        - Fixed BOM handling in Mojo::JSON. (rsp)
+        - Fixed named redirect_to with arguments.
+        - Improved Mojo::Exception. (yuki-kimoto)
+
+0.999909 2009-11-11 00:00:00
+        - Cleaned up tutorial.
+        - FIxed renderer exception bug. (yuki-kimoto)
+
+0.999908 2009-11-11 00:00:00
+        - Fixed bridges/ladders and added tests.
+
+0.999907 2009-11-11 00:00:00
+        - Fixed another connection close bug in ioloop.
+        - Fixed relaxed placeholder format handling in
+          MojoX::Routes::Pattern.
+
+0.999906 2009-11-11 00:00:00
+        - Fixed connection close bug in ioloop.
+
+0.999905 2009-11-11 00:00:00
+        - Fixed routes bug that prevented the root from having formats.
+
+0.999904 2009-11-10 00:00:00
+        - Cleaned up examples.
+
+0.999903 2009-11-10 00:00:00
+        - Added ladders to Mojolicious::Lite, they are like bridges but lite.
+        - Added encoding support to renderer. (likhatskiy)
+        - Added dumper helper.
+        - Made tmpdir in Mojo::Asset::File configurable.
+
+0.999902 2009-11-01 00:00:00
+        - Added include helper.
+        - Optimized buffering a bit.
+        - Fixed a case where multiple clients would taint the shared ioloop.
+          (ferreira)
+        - Fixed a case where non existing actions were considered a server
+          error. (Andre Vieth)
+        - Fixed typos.
+
+0.999901 2009-09-01 00:00:00
+        - Added new Mojo::Client, because the old one had bugs that prevented
+          proper scaling and could not be fixed otherwise.
+          Note that this change is not backwards compatible, the decision to
+          make it so close to the 1.0 release was not easy but the bugs were
+          simply too serious.
+        - Added native JSON support.
+        - Added more designer friendly .ep templates to Mojolicious.
+          The default template format for your application can be controlled
+          with the default_handler attribute of the mojolicious renderer.
+              Mojolicious (in the startup method):
+                  $self->renderer->default_handler('epl');
+                  $self->renderer->default_handler('ep');
+	          Mojolicious::Lite:
+	              app->renderer->default_handler('epl');
+	              app->renderer->default_handler('ep');
+        - Added helper support for .ep templates.
+        - Added callback tests. (melo)
+        - Added support for MOJO_CHUNK_SIZE=1. (melo)
+        - Added not_found.html.* templates.
+        - Added input streaming support to Mojo::Content.
+        - Added client, param, pause, redirect_to and resume to
+          Mojolicious::Controller.
+        - Renamed Mojo::Manual to Mojolicious::Book.
+        - Updated Mojolicious lite_app generator to use .ep templates.
+        - Fixed many bugs in the HTTP 1.1 state machine and added the ability
+          to pause transactions.
+        - Fixed param to be CGI.pm compatible.
+        - Fixed a few cases where exceptions and not found events would
+          result in empty pages.
+        - Fixed layouts with partial templates.
+        - Fixed encoding of non utf8 form data.
+        - Fixed body callbacks to get automatic buffering.
+        - Fixed a case where Mojo::Server::Daemon and Mojo::Client were too
+          defensive and made them in turn 20 times faster.
+        - Fixed keep alive problem in Mojo::Transaction::Pipeline.
+        - Fixed and simplified Mojo::Parameters. (gbarr)
+        - Fixed xml_escape to use character semantics. (vti)
+        - Fixed utf8 handling of routes captures. (vti)
+        - Fixed body helper in Mojo::Message and added tests. (vti)
+        - Fixed padding byte handling in Mojo::Server::FastCGI.
+          (Jaroslav Muhin)
+        - Fixed a few small parser bugs in MojoX::Routes and added tests.
+        - Fixed Mojo::Asset::File and added tests. (Yuki Kimoto)
+        - Fixed generated scripts. (Yuki Kimoto)
+        - Fixed CHLD signal handler for prefork children. (sharifulin)
+        - Fixed typo.
+
+0.991251 2009-08-18 00:00:00
+        - Fixed continue timeout handling in Mojo::Transaction::Simple.
+        - Fixed undefined value in If-Modified-Since check in
+          MojoX::Dispatcher::Routes.
+        - Fixed MojoX::Routes::Pattern::match. (trendels)
+        - Fixed default_handler in MojoX::Renderer. (sharifulin)
+        - Fixed HTML5 tags. (xantus)
+        - Fixed special Apache CGI environment cases.
+        - Fixed Mojo::Log to work with older versions of Perl.
+        - Fixed typo.
+
+0.991250 2009-08-18 00:00:00
+        - This release contains many substantial changes that are not
+          backwards compatible, but good news is that it's also the last
+          major feature breaking release before 1.0. ;)
+          Older releases of Mojo did contain additional Mojo::Script::* and
+          Mojolicious::Script::* modules that are obsolete now and might
+          break this version if they are still present on your system.
+          Because of this we highly suggest that you
+          DELETE ALL MODULES IN THE "Mojo", "MojoX" AND "Mojolicious"
+          NAMESPACES MANUALLY!!!
+        - Mojo::Script has been renamed to Mojo::Command, this change is not
+          backwards compatible!
+          You will have to regenerate application scripts or replace
+          "Mojo(licious)::Script" with "Mojo(licious)::Command" manually.
+        - Removed unused features from Mojo::Base and simplified API, this
+          change is not backwards compatible!
+              __PACKAGE__->attr('foo', default => 'bar');
+          becomes
+              __PACKAGE__->attr(foo => 'bar');
+        - Merged eplite and epl, this change is not backwards compatible, you
+          will have to rename all your eplite templates to epl.
+        - Simplified MojoX::Renderer, this change is not backwards
+          compatible!
+          Handler can no longer be detected, that means "default_handler" or
+          the "handler" argument are required.
+          The template argument can no longer contain format or handler.
+              $self->render(template => 'foo.html.epl')
+          becomes
+              $self->render('foo', format => 'html', handler => 'epl')
+          The following forms are available now.
+              $self->render;
+              $self->render(controller => 'foo', action => 'bar');
+              $self->render({controller => 'foo', action => 'bar'});
+              $self->render(text => 'Hello!');
+              $self->render(template => 'index');
+              $self->render(template => 'foo/index');
+              $self->render(
+                  template => 'index',
+                  format   => 'html',
+                  handler  => 'epl'
+              );
+              $self->render(handler => 'something');
+              $self->render('foo/bar');
+              $self->render('foo/bar', format => 'html');
+              $self->render('foo/bar', {format => 'html'});
+          For renderers the stash will no longer get an updated template,
+          instead a new argument will be passed along.
+              {template => 'foo/bar', format => 'html', handler => 'epl'}
+        - Simplified context and controller in Mojolicious, this change is
+          not backwards compatible!
+          If you've been using a custom context object you'll now have to use
+          a custom controller base class.
+          The new controller_class attribute can now be used to set the
+          default controller in Mojolicious.
+          There is also no $c argument anymore actions get called with, since
+          everything is in $self now.
+        - Refactored and renamed Mojo::Transaction and Mojo::Pipeline, this
+          change is not backwards compatible!
+              Mojo::Transaction -> Mojo::Transaction::Single
+              Mojo::Pipeline -> Mojo::Transaction::Pipeline
+        - Refactored and renamed Mojo::File and Mojo::File::Memory, this
+          change is not backwards compatible!
+              Mojo::File -> Mojo::Asset::File
+              Mojo::File::Memory -> Mojo::Asset::Memory
+        - Refactored and renamed Mojo::Content, this change is not backwards
+          compatible!
+              Mojo::Content -> Mojo::Content::Single
+        - Added conditions to MojoX::Routes.
+        - Added routes script to Mojolicious.
+        - Simplified Mojo::Base.
+        - Simplified exceptions.
+        - Changed Mojo::Log to default to utf8 when writing to a file.
+        - Cleaned up Mojo::Date.
+        - Cleaned up Mojo::Transaction.
+        - Made build_tx a callback named build_tx_cb in Mojo.
+        - Made the exception template a bit more fault tolerant.
+        - Made controller base class configurable in
+          MojoX::Dispatcher::Routes.
+        - Removed address, password and user methods from Mojo::URL.
+        - Fixed Microsoft IIS CGI and FastCGI environment support.
+        - Fixed prefix handling in MojoX::Dispatcher::Static.
+        - Fixed max_age in Mojo::Cookie.
+        - Fixed cloning of urls with base in Mojo::URL.
+        - Fixed parsing of multiple headers and cookies with same name.
+        - Fixed pipeline support in Mojo::Client. (acajou)
+        - Fixed utf8 handling in Mojo::Parameters. (vti)
+        - Fixed Mojo::Scripts to only allow word characters in script names.
+        - Fixed security problem in MojoX::Dispatcher::Static. (trendels)
+
+0.991246 2009-08-01 00:00:00
+        - Fixed typo.
+
+0.991245 2009-07-31 00:00:00
+        - Added spin_app to Mojo::Client and simplified API.
+        - Added port support to Mojo::Cookie.
+        - Made chunk size configurable with MOJO_CHUNK_SIZE environment variable.
+        - Simplified script system startup.
+        - Cleaned up server tests.
+        - Fixed win32 bug where eplite templates would not be detected right.
+
+0.991244 2009-07-30 00:00:00
+        - Fixed package.
+
+0.991243 2009-07-28 00:00:00
+        - Made eplite ignore everything after __END__.
+        - Made proxy support more portable.
+        - Simplified progress callbacks.
+        - Cleaned up internal Mojo APIs.
+        - Added local host bin address support to Mojo::Server::Daemon.
+        - Fixed layouts on win32 and made templates portable, "/" is now the
+          separator on all platforms. (charsbar)
+        - Fixed dependency on Getopt::Long 2.38. (kevinold)
+        - Fixed Perl 5.8.1 prereqs. (alias)
+
+0.991242 2009-07-27 00:00:00
+        - Cleaned up the whole script system, this change is mostly backwards
+          compatible except for a few cases.
+              "daemon $port" now becomes "daemon -p $port"
+              "mojolicious mojo $script" becomes "mojolicious $script"
+        - Added HTML escape expression marks "<%==" and "%==" to
+          Mojo::Template.
+        - Added more Mojolicious::Lite examples and reformatted them into a
+          tutorial.
+        - Fixed a bridge bug in MojoX::Dispatcher and added tests.
+
+0.991241 2009-07-20 00:00:00
+        - Mojolicious::Lite has been introduced as a new entry level web
+          framework example.
+        - Mojo::Message::Response will now default to response code 200,
+          this change is not backwards compatible.
+          In Mojolicious you should use ->render(text => 'Hello!') instead of
+          ->res->body('Hello!') now.
+        - Changed routes syntax again, this change is not entirely backwards
+          compatible but will only affect you if you are using the relaxed
+          and wildcard variations.
+              "/((foo))" becomes "/(.foo)"
+              "/(((foo)))" becomes "/(*foo)"
+        - Updated Mojolicious to support ->render(text => 'Hello World!').
+        - Updated Mojo::Script::get_data to use "@@ $name" instead of
+          "__$name__".
+        - Updated our routes implementation to support HTTP request methods.
+        - Updated Mojo::Home to fallback to FindBin for detection.
+        - Made Mojolicious much more fault tolerant.
+        - Fixed PATH_INFO handling of the CGI environment parser in
+          Mojo::Message::Request.
+        - Added url_for and render_partial to Mojolicious::Controller.
+        - Added namespace support to Mojo::Template.
+        - Added eplite handler to Mojolicious::Renderer.
+        - Added generator for lite apps.
+        - Added tests.
+        - Allow log level override via environment variable in Mojo::Log.
+        - Code cleanup.
+
+0.991240 2009-07-19 00:00:00
+        - Turned Mojolicious layout rendering inside out for better exception
+          handling and to make layouts configurable from templates.
+        - Added debug helpers to Mojo::Server::FastCGI.
+        - Fixed detection bug in Mojo::Home.
+        - Fixed generator bug in Mojo::Script.
+        - Fixed Windows related parser bug in Mojo::Loader::Exception.
+        - Cleaned up code.
+
+0.991239 2009-07-16 00:00:00
+        - Renamed bin directory to script, old apps should not break but you
+          are still encouraged to rename the directory yourself.
+        - Simplified Mojo::Template, this will only affect you if you are
+          using Mojo::Template directly.
+        - Added setuid/setgid support to Mojo::Server::Daemon and
+          Mojo::Server::Daemon::Prefork. (James Duncan)
+        - Updated Mojo::Server::FastCGI and Mojo::Server::Daemon::Prefork to
+          use the application logger.
+        - Fixed import problem in Mojo::Server::Daemon::Prefork. (James Duncan)
+        - Fixed warning in template.t.
+
+0.991238 2009-07-16 00:00:00
+        - Fixed all shebang lines.
+
+0.991237 2009-07-15 00:00:00
+        - Renamed process_local to process_app in Mojo::Client, this change
+          is not backward compatible and you might have to change some of
+          your tests.
+        - Simplified MojoX::Renderer.
+        - Simplified Mojo::Loader.
+        - Simplified Mojo::ByteStream.
+        - Simplified exceptions.
+        - Updated all modules to use IO::Poll instead of IO::Select.
+        - Updated exception handling in Mojolicious to work with exceptions
+          in epl templates.
+        - Updated Mojo and Mojolicious to log to STDERR if log directory
+          isn't writable.
+        - Updated Mojo and Mojolicious to work without boilerplate and a
+          single MyApp.pm file.
+        - Added html_encode and html_decode methods to Mojo::ByteStream.
+        - Improved 100 Continue handling and added more tests. (acajou)
+        - Improved Mojo::Template exception handling.
+        - Cleaned up exception code.
+        - Fixed possible infinite loop in Mojo::Server::FastCGI.
+        - Fixed typos.
+
+0.991236 2009-07-05 00:00:00
+        - Simplified Mojo::Home.
+        - Moved executable detection to Test::Mojo::Server.
+        - Improved Mojo::Loader::Exception.
+        - Moved persistent_error.t tests to app.t.
+        - Cleaned up code.
+        - Fixed at_least_version. (yuki-kimoto)
+
+0.991235 2009-07-05 00:00:00
+        - Removed prepare/finalize methods from Mojolicious.
+        - Fixed typos.
+
+0.991234 2009-07-03 00:00:00
+        - Added name and value filters to Mojo::Headers. (acajou)
+        - Added clean multiline value handling to Mojo::Headers.
+        - Added prepare/finalize methods to Mojolicious.
+        - Added some additional mime types to MojoX::Types.
+        - Renamed method add_line to add in Mojo::Headers.
+        - Updated generator scripts to play nice with MM->parse_version.
+
+0.991233 2009-07-01 00:00:00
+        - Rewrote Mojo::Client::process_local to use the new state machine.
+        - Added Server and X-Powered-By headers.
+        - Fixed external server tests.
+        - Fixed Mojo::Date handling of negative epoch values.
+
+0.991232 2009-06-29 00:00:00
+        - Fixed tarball.
+
+0.991231 2009-06-29 00:00:00
+        - Rewrote MojoX::Renderer, it is not backward compatible and
+          templates need to be renamed in the following 3 part format
+          "index.html.tt"!
+        - Added exception support to MojoX::Dispatcher::Routes, this change
+          is not backward compatible and "dispatch" calls now return
+          exception objects for errors and false otherwise.
+        - Changed routes syntax, this change is not backward compatible and
+          you need to change all your existing routes.
+            "/:foo" becomes "/(foo)"
+            "/^foo" becomes "/((foo))"
+            "/*foo" becomes "/(((foo)))"
+        - Added full HTTP 1.1 pipelining support to all Mojo layers.
+        - Added layout support to MojoX::Renderer.
+        - Made render call optional.
+        - Added format support to MojoX::Routes.
+        - Added Mojo::Loader::Exception.
+        - Added wildcard symbol support to MojoX::Routes and rewrote many
+          routes internals.
+        - Added Makefile.PL generator.
+        - Added HttpOnly support to Mojo::Cookie. (burak)
+        - Support more CGI implementations.
+        - Added support for namespaces only dispatching in
+          MojoX::Dispatcher::Routes.
+        - Added encoding support to Mojo::Template and made "utf8" the
+          default.
+        - Added HEAD support to Mojo::Server::Daemon. (acajou)
+        - Added new relaxed placeholder to MojoX::Routes::Pattern.
+        - Added Mojo::Template::Exception.
+        - Added HEAD support to the Mojo::Transaction state machine and
+          related modules. (acajou)
+        - Added safe_post option to Mojo::Pipeline. (acajou)
+        - Made chained => 1 the default in Mojo::Base.
+        - Fixed compiler bug in Mojo::Template that prevented more advanced
+          control structures, you might have to add additional semicolons to
+          some of your templates.
+        - Fixed Mojo::Date to not crash on invalid dates. (vti)
+        - Fixed chunked support in Mojo::Server::Daemon and Mojo::Client.
+        - Fixed tokenizer in MojoX::Routes::Pattern to support "0" values.
+          (Anatoly Sharifulin)
+        - Fixed parsing of "0" in Mojo::Path. (charsbar)
+        - Fix server tests on win32. (charsbar)
+        - Fixed leading whitespace problem in the request parser. (acajou)
+        - Fixed broken pipe problem in Mojo::Server::CGI. (vti)
+        - Added more diagnostics options to Mojo::HelloWorld. (uwe)
+        - Fixed empty cookie parsing. (vti)
+        - Fixed a case where child processes migth hang in
+          Mojo::Server::Daemon::Prefork. (gbarr)
+        - Fixed a bug in MojoX::Dispatcher::Routes where the renderer would
+          be called with an empty stack. (melo)
+        - Fixed a escaping problem in Mojo::Parameters. (vti)
+        - Updated Mojo::URL to be more template friendly.
+        - Improved Solaris compatibility.
+
+0.9002  2009-02-16 00:00:00
+        - Added local_address(), local_port(), remote_address() and
+          remote_port() to Mojo::Transaction.
+        - Improved tests.
+        - Fixed some typos.
+
+0.9001  2009-01-28 00:00:00
+        - Added proper home detection to Mojo itself. (charsbar)
+        - Fixed a bug where errors got cached in the routes dispatcher.
+          (charsbar)
+        - Updated error handling in MojoX::Dispatcher::Static.
+        - Fixed Mojo::Message::Request::cookies() to always return a
+          arrayref.
+        - Fixed url_for to support references. (vti)
+        - Fixed unescaping of captures. (vti)
+        - Fixed typos. (uwe)
 
 0.9     2008-12-01 00:00:00
         - Added modes to Mojolicious.

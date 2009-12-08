@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package Mojo::Stateful;
 
@@ -9,27 +9,58 @@ use base 'Mojo::Base';
 
 # Don't kid yourself, Jimmy. If a cow ever got the chance,
 # he'd eat you and everyone you care about!
-__PACKAGE__->attr(state => (chained => 1, default => 'start'));
+__PACKAGE__->attr('state_cb');
 
 sub done { shift->state('done') }
 
 sub error {
     my ($self, $message) = @_;
-    return $self->{error} unless $message;
+
+    # Get
+    if (!$message) {
+        return ($self->{error} || 'Unknown state machine error.')
+          if $self->has_error;
+        return;
+    }
+
+    # Set
     $self->state('error');
-    return $self->{error} = $message;
+    $self->{error} = $message;
+    return $self;
 }
 
-sub has_error { return defined shift->{error} }
+sub has_error { shift->state eq 'error' }
 
-sub is_done { return shift->state eq 'done' }
+sub is_done { shift->state eq 'done' }
 
-sub is_finished { return shift->is_state(qw/done error/) }
+sub is_finished { shift->is_state(qw/done done_with_leftovers error/) }
 
 sub is_state {
     my ($self, @states) = @_;
     for my $state (@states) { return 1 if $self->state eq $state }
-    return 0;
+    return;
+}
+
+sub state {
+    my ($self, $state) = @_;
+
+    # Default
+    $self->{state} ||= 'start';
+
+    # Get
+    return $self->{state} unless $state;
+
+    # Old state
+    my $old = $self->{state};
+
+    # New state
+    $self->{state} = $state;
+
+    # Callback
+    my $cb = $self->state_cb;
+    $self->$cb($old, $state) if $cb;
+
+    return $self;
 }
 
 1;
@@ -49,15 +80,12 @@ L<Mojo::Stateful> is a base class for state keeping instances.
 
 =head1 ATTRIBUTES
 
-=head2 C<error>
+L<Mojo::Stateful> implements the following attributes.
 
-    my $error = $stateful->error;
-    $stateful = $stateful->error('Parser error: test 123');
+=head2 C<state_cb>
 
-=head2 C<state>
-
-   my $state = $stateful->state;
-   $stateful = $stateful->state('writing');
+   my $cb    = $stateful->state_cb;
+   $stateful = $stateful->state_cb(sub {...});
 
 =head1 METHODS
 
@@ -67,6 +95,11 @@ following new ones.
 =head2 C<done>
 
     $stateful = $stateful->done;
+
+=head2 C<error>
+
+    my $error = $stateful->error;
+    $stateful = $stateful->error('Parser error: test 123');
 
 =head2 C<has_error>
 
@@ -80,12 +113,14 @@ following new ones.
 
     my $finished = $stateful->is_finished;
 
-Returns true if C<state> is C<done> or C<error>.
-Returns false otherwise.
-
 =head2 C<is_state>
 
     my $is_state = $stateful->is_state('writing');
     my $is_state = $stateful->is_state(qw/error reading writing/);
+
+=head2 C<state>
+
+    my $state = $stateful->state;
+    $stateful = $stateful->state('writing');
 
 =cut

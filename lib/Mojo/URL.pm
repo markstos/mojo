@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package Mojo::URL;
 
@@ -8,20 +8,12 @@ use warnings;
 use base 'Mojo::Base';
 use overload '""' => sub { shift->to_string }, fallback => 1;
 
-use Mojo::ByteStream;
+use Mojo::ByteStream 'b';
 use Mojo::Parameters;
 use Mojo::Path;
 
-__PACKAGE__->attr(
-    [qw/fragment host password port scheme user/] => (chained => 1));
-__PACKAGE__->attr(base => (chained => 1, default => sub { Mojo::URL->new }));
-__PACKAGE__->attr(path => (chained => 1, default => sub { Mojo::Path->new }));
-__PACKAGE__->attr(
-    query => (
-        chained => 1,
-        default => sub { Mojo::Parameters->new }
-    )
-);
+__PACKAGE__->attr([qw/fragment host port scheme userinfo/]);
+__PACKAGE__->attr(base => sub { Mojo::URL->new });
 
 # RFC 3986
 our $UNRESERVED = 'A-Za-z0-9\-\.\_\~';
@@ -29,7 +21,7 @@ our $SUBDELIM   = '!\$\&\'\(\)\*\+\,\;\=';
 our $PCHAR      = "$UNRESERVED$SUBDELIM\%\:\@";
 
 # The specs for this are blurry, it's mostly a colelction of w3c suggestions
-our $PARAM = "$UNRESERVED\!\$\'\(\)\*\+\,\:\@\%\/\?";
+our $PARAM = "$UNRESERVED\!\$\'\(\)\*\,\:\@\/\?";
 
 sub new {
     my $self = shift->SUPER::new();
@@ -58,18 +50,20 @@ sub authority {
             $port = $2;
         }
 
-        $self->userinfo($userinfo);
-        $self->host($host);
+        $self->userinfo(
+            $userinfo ? b($userinfo)->url_unescape->to_string : undef);
+        $self->host($host ? b($host)->url_unescape->to_string : undef);
         $self->port($port);
 
         return $self;
     }
 
     # *( unreserved / pct-encoded / sub-delims )
-    my $host =
-      Mojo::ByteStream->new($self->host)->url_escape("$UNRESERVED$SUBDELIM");
-    my $port     = $self->port;
-    my $userinfo = $self->userinfo;
+    my $host = b($self->host)->url_escape("$UNRESERVED$SUBDELIM");
+    my $port = $self->port;
+
+    # *( unreserved / pct-encoded / sub-delims / ":" )
+    my $userinfo = b($self->userinfo)->url_escape("$UNRESERVED$SUBDELIM\:");
 
     # Format
     $authority .= "$userinfo\@" if $userinfo;
@@ -82,6 +76,7 @@ sub authority {
 sub clone {
     my $self = shift;
 
+    # Clone
     my $clone = Mojo::URL->new;
     $clone->scheme($self->scheme);
     $clone->authority($self->authority);
@@ -89,13 +84,16 @@ sub clone {
     $clone->query($self->query->clone);
     $clone->fragment($self->fragment);
 
+    # Base
+    $clone->base($self->base->clone) if $self->{base};
+
     return $clone;
 }
 
 sub is_abs {
     my $self = shift;
     return 1 if $self->scheme && $self->authority;
-    return 0;
+    return;
 }
 
 sub parse {
@@ -115,6 +113,35 @@ sub parse {
     $self->fragment($fragment);
 
     return $self;
+}
+
+sub path {
+    my ($self, $path) = @_;
+
+    # Set
+    if ($path) {
+        $self->{path} = ref $path ? $path : Mojo::Path->new($path);
+        return $self;
+    }
+
+    # Get
+    $self->{path} ||= Mojo::Path->new;
+    return $self->{path};
+}
+
+sub query {
+    my $self = shift;
+
+    # Set
+    if (@_) {
+        $self->{query} =
+          @_ > 1 ? Mojo::Parameters->new(ref $_[0] ? @{$_[0]} : @_) : $_[0];
+        return $self;
+    }
+
+    # Get
+    $self->{query} ||= Mojo::Parameters->new;
+    return $self->{query};
 }
 
 sub to_abs {
@@ -183,8 +210,7 @@ sub to_string {
     my $query     = $self->query;
 
     # *( pchar / "/" / "?" )
-    my $fragment =
-      Mojo::ByteStream->new($self->fragment)->url_escape("$PCHAR\/\?");
+    my $fragment = b($self->fragment)->url_escape("$PCHAR\/\?");
 
     # Format
     my $url = '';
@@ -192,41 +218,9 @@ sub to_string {
     $url .= lc "$scheme://" if $scheme && $authority;
     $url .= "$authority$path";
     $url .= "?$query" if @{$query->params};
-    $url .= "#$fragment" if $fragment->length;
+    $url .= "#$fragment" if $fragment->size;
 
     return $url;
-}
-
-sub userinfo {
-    my ($self, $userinfo) = @_;
-
-    # Set
-    if (defined $userinfo) {
-        my $user     = $userinfo;
-        my $password = '';
-
-        if ($user =~ /^([^\:]*)\:(.*)$/) {
-            $user     = $1;
-            $password = $2;
-        }
-
-        $self->user(Mojo::ByteStream->new($user)->url_unescape->to_string);
-        $self->password(
-            Mojo::ByteStream->new($password)->url_unescape->to_string);
-
-        return $self;
-    }
-
-    # *( unreserved / pct-encoded / sub-delims / ":" )
-    my $user =
-      Mojo::ByteStream->new($self->user)
-      ->url_escape("$UNRESERVED$SUBDELIM\:");
-    my $password =
-      Mojo::ByteStream->new($self->password)
-      ->url_escape("$UNRESERVED$SUBDELIM\:");
-
-    # Format
-    return $user ? "$user:$password" : undef;
 }
 
 1;
@@ -246,8 +240,6 @@ Mojo::URL - Uniform Resource Locator
     );
     print $url->scheme;
     print $url->userinfo;
-    print $url->user;
-    print $url->password;
     print $url->host;
     print $url->port;
     print $url->path;
@@ -271,6 +263,8 @@ L<Mojo::URL> implements a subset of RFC 3986 for Uniform Resource Locators.
 
 =head1 ATTRIBUTES
 
+L<Mojo::URL> implements the following attributes.
+
 =head2 C<authority>
 
     my $authority = $url->autority;
@@ -291,44 +285,20 @@ L<Mojo::URL> implements a subset of RFC 3986 for Uniform Resource Locators.
     my $host = $url->host;
     $url     = $url->host('127.0.0.1');
 
-=head2 C<password>
-
-    my $password = $url->password;
-    $url         = $url->password('pass;w0rd');
-
-=head2 C<path>
-
-    my $path = $url->path;
-    $url     = $url->path(Mojo::Path->new);
-
 =head2 C<port>
 
     my $port = $url->port;
     $url     = $url->port(8080);
-
-=head2 C<query>
-
-    my $query = $url->query;
-    $url      = $url->query(Mojo::Parameters->new);
 
 =head2 C<scheme>
 
     my $scheme = $url->scheme;
     $url       = $url->scheme('http');
 
-=head2 C<user>
-
-    my $user = $url->user;
-    $url     = $url->user('root');
-
 =head2 C<userinfo>
 
     my $userinfo = $url->userinfo;
     $url         = $url->userinfo('root:pass%3Bw0rd');
-
-Returns the userinfo part of the URL if called without arguments.
-Returns the invocant if called with arguments.
-Expects a string containing user credentials.
 
 =head1 METHODS
 
@@ -351,6 +321,19 @@ following new ones.
 =head2 C<parse>
 
     $url = $url->parse('http://127.0.0.1:3000/foo/bar?fo=o&baz=23#foo');
+
+=head2 C<path>
+
+    my $path = $url->path;
+    $url     = $url->path('/foo/bar');
+    $url     = $url->path(Mojo::Path->new);
+
+=head2 C<query>
+
+    my $query = $url->query;
+    $url      = $url->query(name => 'value');
+    $url      = $url->query([name => 'value']);
+    $url      = $url->query(Mojo::Parameters->new);
 
 =head2 C<to_abs>
 

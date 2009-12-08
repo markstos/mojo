@@ -1,6 +1,6 @@
-#!perl
+#!/usr/bin/env perl
 
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 use strict;
 use warnings;
@@ -11,12 +11,11 @@ use File::Spec;
 use File::Temp;
 use Mojo::Client;
 use Mojo::Template;
-use Mojo::Transaction;
 use Test::Mojo::Server;
 
 plan skip_all => 'set TEST_LIGHTTPD to enable this test (developer only!)'
   unless $ENV{TEST_LIGHTTPD};
-plan tests => 6;
+plan tests => 7;
 
 # They think they're so high and mighty,
 # just because they never got caught driving without pants.
@@ -25,14 +24,33 @@ use_ok('Mojo::Server::FastCGI');
 # Setup
 my $server = Test::Mojo::Server->new;
 my $port   = $server->generate_port_ok;
-my $script = $server->home->executable;
 my $dir    = File::Temp::tempdir();
 my $config = File::Spec->catfile($dir, 'fcgi.config');
 my $mt     = Mojo::Template->new;
 
-$mt->render_to_file(<<'EOF', $config, $dir, $port, $script);
-% my ($dir, $port, $script) = @_;
-% use File::Spec::Functions 'catfile'
+# FastCGI setup
+my $fcgi = File::Spec->catfile($dir, 'test.fcgi');
+$mt->render_to_file(<<'EOF', $fcgi);
+#!<%= $^X %>
+
+use strict;
+use warnings;
+
+% use FindBin;
+use lib '<%= "$FindBin::Bin/../../lib" %>';
+
+use Mojo::Server::FastCGI;
+
+Mojo::Server::FastCGI->new->run;
+
+1;
+EOF
+chmod 0777, $fcgi;
+ok(-x $fcgi);
+
+$mt->render_to_file(<<'EOF', $config, $dir, $port, $fcgi);
+% my ($dir, $port, $fcgi) = @_;
+% use File::Spec::Functions 'catfile';
 server.modules = (
     "mod_access",
     "mod_fastcgi",
@@ -52,7 +70,7 @@ fastcgi.server = (
         "FastCgiTest" => (
             "socket"          => "<%= catfile $dir, 'test.socket' %>",
             "check-local"     => "disable",
-            "bin-path"        => "<%= $script %> fastcgi",
+            "bin-path"        => "<%= $fcgi %> fastcgi",
             "min-procs"       => 1,
             "max-procs"       => 1,
             "idle-timeout"    => 20
@@ -66,11 +84,14 @@ $server->command("lighttpd -D -f $config");
 $server->start_server_ok;
 
 # Request
-my $tx     = Mojo::Transaction->new_get("http://127.0.0.1:$port/test/");
 my $client = Mojo::Client->new;
-$client->process_all($tx);
-is($tx->res->code, 200);
-like($tx->res->body, qr/Mojo is working/);
+$client->get(
+    "http://127.0.0.1:$port/test/" => sub {
+        my ($self, $tx) = @_;
+        is($tx->res->code, 200);
+        like($tx->res->body, qr/Mojo is working/);
+    }
+)->process;
 
 # Stop
 $server->stop_server_ok;

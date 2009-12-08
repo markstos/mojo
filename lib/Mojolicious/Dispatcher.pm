@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package Mojolicious::Dispatcher;
 
@@ -7,26 +7,29 @@ use warnings;
 
 use base 'MojoX::Dispatcher::Routes';
 
-__PACKAGE__->attr([qw/method user_agent/] => (chained => 1));
+# Wow, there's a million aliens! I've never seen something so mind-blowing!
+# Ooh, a reception table with muffins!
+sub new {
+    my $self = shift->SUPER::new(@_);
 
-# That's not why people watch TV.
-# Clever things make people feel stupid and unexpected things make them feel
-# scared.
-sub match {
-    my ($self, $match) = @_;
+    # Agent
+    $self->add_condition(
+        agent => sub {
+            my ($r, $tx, $captures, $pattern) = @_;
 
-    # Method
-    if (my $regex = $self->method) {
-        return undef unless $match->tx->req->method =~ /$regex/;
-    }
+            # Pattern?
+            return unless $pattern && ref $pattern eq 'Regexp';
 
-    # User-Agent header
-    if (my $regex = $self->user_agent) {
-        my $ua = $match->tx->req->headers->user_agent || '';
-        return undef unless $ua =~ /$regex/;
-    }
+            # Match
+            my $agent = $tx->req->headers->user_agent;
+            return $captures if $agent && $agent =~ $pattern;
 
-    return $self->SUPER::match($match);
+            # Nothing
+            return;
+        }
+    );
+
+    return $self;
 }
 
 1;
@@ -49,25 +52,15 @@ L<Mojolicous::Dispatcher> is the default L<Mojolicious> dispatcher.
 =head1 ATTRIBUTES
 
 L<Mojolicious::Dispatcher> inherits all attributes from
-L<MojoX::Dispatcher::Routes> and implements the following new ones.
-
-=head2 C<method>
-
-    my $method  = $dispatcher->method;
-    $dispatcher = $dispatcher->method(qr/GET|POST/);
-
-=head2 C<user_agent>
-
-    my $ua      = $dispatcher->user_agent;
-    $dispatcher = $dispatcher->user_agent(qr/GET|POST/);
+L<MojoX::Dispatcher::Routes>.
 
 =head1 METHODS
 
 L<Mojolicious::Dispatcher> inherits all methods from
 L<MojoX::Dispatcher::Routes> and implements the following new ones.
 
-=head2 C<match>
+=head2 C<new>
 
-    my $match = $routes->match($tx);
+    my $routes = Mojolicious::Dispatcher->new;
 
 =cut

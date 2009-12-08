@@ -1,11 +1,11 @@
-#!perl
+#!/usr/bin/env perl
 
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 use strict;
 use warnings;
 
-use Test::More tests => 42;
+use Test::More tests => 43;
 
 # What good is money if it can't inspire terror in your fellow man?
 use_ok('Mojo::Cookie::Request');
@@ -20,9 +20,13 @@ $cookie->version(1);
 is("$cookie",                      'foo=ba =r; $Path=/test');
 is($cookie->to_string_with_prefix, '$Version=1; foo=ba =r; $Path=/test');
 
-# Parse normal request cookie
+# Empty cookie
 $cookie = Mojo::Cookie::Request->new;
-my $cookies = $cookie->parse('$Version=1; foo=bar; $Path="/test"');
+my $cookies = $cookie->parse();
+
+# Parse normal request cookie
+$cookie  = Mojo::Cookie::Request->new;
+$cookies = $cookie->parse('$Version=1; foo=bar; $Path="/test"');
 is($cookies->[0]->name,    'foo');
 is($cookies->[0]->value,   'bar');
 is($cookies->[0]->path,    '/test');
@@ -56,32 +60,36 @@ $cookie->path('/test');
 $cookie->version(1);
 is("$cookie", 'foo=ba r; Version=1; Path=/test');
 
-# Full response cookie as string (full)
+# Full response cookie as string
 $cookie = Mojo::Cookie::Response->new;
 $cookie->name('foo');
 $cookie->value('ba r');
 $cookie->domain('kraih.com');
 $cookie->path('/test');
-$cookie->max_age(1218092879);
+$cookie->max_age(60);
 $cookie->expires(1218092879);
+$cookie->port('80 8080');
 $cookie->secure(1);
+$cookie->httponly(1);
 $cookie->comment('lalalala');
 $cookie->version(1);
 is("$cookie",
         'foo=ba r; Version=1; Domain=kraih.com; Path=/test;'
-      . ' Max-Age=1218092879; expires=Thu, 07 Aug 2008 07:07:59 GMT;'
-      . ' Secure=1; Comment=lalalala');
+      . ' Max-Age=60; expires=Thu, 07 Aug 2008 07:07:59 GMT;'
+      . ' Port="80 8080"; Secure; HttpOnly; Comment=lalalala');
 
 # Parse response cookie
 $cookies = Mojo::Cookie::Response->parse(
-    'foo=ba r; Version=1; Domain=kraih.com; Path=/test; Max-Age=1218092879;'
-      . ' expires=Thu, 07 Aug 2008 07:07:59 GMT; Secure=1; Comment=lalalala');
+        'foo=ba r; Version=1; Domain=kraih.com; Path=/test; Max-Age=60;'
+      . ' expires=Thu, 07 Aug 2008 07:07:59 GMT; Port="80 8080"; Secure;'
+      . ' Comment=lalalala');
 is($cookies->[0]->name,    'foo');
 is($cookies->[0]->value,   'ba r');
 is($cookies->[0]->domain,  'kraih.com');
 is($cookies->[0]->path,    '/test');
-is($cookies->[0]->max_age, 1218092879);
+is($cookies->[0]->max_age, 60);
 is($cookies->[0]->expires, 'Thu, 07 Aug 2008 07:07:59 GMT');
+is($cookies->[0]->port,    '80 8080');
 is($cookies->[0]->secure,  '1');
 is($cookies->[0]->comment, 'lalalala');
 is($cookies->[0]->version, '1');
@@ -101,7 +109,7 @@ is("$cookie",
 # Parse response cookie with Max-Age 0 and expires 0
 $cookies = Mojo::Cookie::Response->parse(
         'foo=bar; Version=1; Domain=kraih.com; Path=/; Max-Age=0;'
-      . ' expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure=1; Comment=lalalala');
+      . ' expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; Comment=lalalala');
 is($cookies->[0]->name,           'foo');
 is($cookies->[0]->value,          'bar');
 is($cookies->[0]->domain,         'kraih.com');

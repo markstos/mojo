@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package Mojo::Headers;
 
@@ -10,12 +10,10 @@ use overload '""' => sub { shift->to_string }, fallback => 1;
 
 use Mojo::Buffer;
 
-__PACKAGE__->attr(
-    buffer => (
-        chained => 1,
-        default => sub { Mojo::Buffer->new }
-    )
-);
+__PACKAGE__->attr(buffer => sub { Mojo::Buffer->new });
+
+__PACKAGE__->attr(_buffer  => sub { [] });
+__PACKAGE__->attr(_headers => sub { {} });
 
 my @GENERAL_HEADERS = qw/
   Cache-Control
@@ -86,17 +84,38 @@ my (%ORDERED_HEADERS, %NORMALCASE_HEADERS);
     }
 }
 
-sub add_line {
+sub add {
     my $self = shift;
     my $name = shift;
-    $name = lc $name;
 
-    # Initialize header
-    $self->{_headers} ||= {};
-    $self->{_headers}->{$name} ||= [];
+    # Filter illegal characters from header name
+    # (1*<any CHAR except CTLs or separators>)
+    $name =~ s/[[:cntrl:]\(\|\)\<\>\@\,\;\:\\\"\/\[\]\?\=\{\}\s]//g;
+
+    # Make sure we have a normal case entry for name
+    my $lcname = lc $name;
+    unless ($NORMALCASE_HEADERS{$lcname}) {
+        $NORMALCASE_HEADERS{$lcname} = $name;
+    }
+    $name = $lcname;
+
+    # Filter values
+    my @values;
+    for my $v (@_) {
+        push @values, [];
+
+        for my $value (@{ref $v eq 'ARRAY' ? $v : [$v]}) {
+
+            # Filter control characters
+            $value = '' unless defined $value;
+            $value =~ s/[[:cntrl:]]//g;
+
+            push @{$values[-1]}, $value;
+        }
+    }
 
     # Add line
-    push @{$self->{_headers}->{$name}}, @_;
+    push @{$self->_headers->{$name}}, @values;
 
     return $self;
 }
@@ -107,8 +126,10 @@ sub build {
     # Prepare headers
     my @headers;
     for my $name (@{$self->names}) {
-        for my $value ($self->header($name)) {
-            $value = '' unless defined $value;
+
+        # Multiline value?
+        for my $values ($self->header($name)) {
+            my $value = join "\x0d\x0a ", @$values;
             push @headers, "$name: $value";
         }
     }
@@ -118,67 +139,59 @@ sub build {
     return length $headers ? $headers : undef;
 }
 
-sub connection          { return shift->header('Connection',          @_) }
-sub content_disposition { return shift->header('Content-Disposition', @_) }
-sub content_length      { return shift->header('Content-Length',      @_) }
-sub content_type        { return shift->header('Content-Type',        @_) }
-sub cookie              { return shift->header('Cookie',              @_) }
-sub date                { return shift->header('Date',                @_) }
-sub expect              { return shift->header('Expect',              @_) }
+sub connection          { shift->header('Connection',          @_) }
+sub content_disposition { shift->header('Content-Disposition', @_) }
+sub content_length      { shift->header('Content-Length',      @_) }
+
+sub content_transfer_encoding {
+    shift->header('Content-Transfer-Encoding', @_);
+}
+
+sub content_type { shift->header('Content-Type', @_) }
+sub cookie       { shift->header('Cookie',       @_) }
+sub date         { shift->header('Date',         @_) }
+sub expect       { shift->header('Expect',       @_) }
 
 # Will you be my mommy? You smell like dead bunnies...
 sub header {
     my $self = shift;
     my $name = shift;
 
-    # Initialize
-    $self->{_headers} ||= {};
-
-    # Make sure we have a normal case entry for name
-    my $lcname = lc $name;
-    unless ($NORMALCASE_HEADERS{$lcname}) {
-        $NORMALCASE_HEADERS{$lcname} = $name;
-    }
-    $name = $lcname;
-
-    # Get on undefined header
-    unless ($self->{_headers}->{$name}) {
-        return undef unless @_;
-    }
-
     # Set
     if (@_) {
-        $self->{_headers}->{$name} = [@_];
-        return $self;
+        $self->remove($name);
+        return $self->add($name, @_);
     }
 
-    # Filter
-    my @header;
-    for my $value (@{$self->{_headers}->{$name}}) {
-        $value = '' unless defined $value;
-        $value =~ s/\s+$//;
-        $value =~ s/\n\n+/\n/g;
-        $value =~ s/\n([^\040\t])/\n $1/g;
-        push @header, $value;
-    }
+    # Get
+    my $headers;
+    return unless $headers = $self->_headers->{lc $name};
 
     # String
-    return join(', ', @header) unless wantarray;
+    unless (wantarray) {
+
+        # Format
+        my $string = '';
+        for my $header (@$headers) {
+            $string .= ', ' if $string;
+            $string .= join ', ', @$header;
+        }
+
+        return $string;
+    }
 
     # Array
-    return @header;
+    return @$headers;
 }
 
-sub host { return shift->header('Host', @_) }
+sub host     { shift->header('Host',     @_) }
+sub location { shift->header('Location', @_) }
 
 sub names {
     my $self = shift;
 
-    # Initialize
-    $self->{_headers} ||= {};
-
     # Names
-    my @names = keys %{$self->{_headers}};
+    my @names = keys %{$self->_headers};
 
     # Sort
     @names = sort {
@@ -196,12 +209,13 @@ sub names {
 }
 
 sub parse {
-    my $self = shift;
-    $self->buffer->add_chunk(join '', @_) if @_;
+    my ($self, $chunk) = @_;
+
+    # Buffer
+    $self->buffer->add_chunk($chunk);
 
     # Parse headers
-    $self->state('headers') if $self->is_state('started');
-    $self->{__headers} ||= [];
+    $self->state('headers') if $self->is_state('start');
     while (1) {
 
         # Line
@@ -210,56 +224,49 @@ sub parse {
 
         # New header
         if ($line =~ /^(\S+)\s*:\s*(.*)/) {
-            push @{$self->{__headers}}, $1, $2;
+            push @{$self->_buffer}, $1, $2;
         }
 
         # Multiline
-        elsif (@{$self->{__headers}} && $line =~ s/^\s+//) {
-            $self->{__headers}->[-1] .= " " . $line;
+        elsif (@{$self->_buffer} && $line =~ s/^\s+//) {
+            $self->_buffer->[-1] .= " " . $line;
         }
 
         # Empty line
         else {
 
             # Store headers
-            for (my $i = 0; $i < @{$self->{__headers}}; $i += 2) {
-                $self->header($self->{__headers}->[$i],
-                    $self->{__headers}->[$i + 1]);
+            for (my $i = 0; $i < @{$self->_buffer}; $i += 2) {
+                $self->add($self->_buffer->[$i], $self->_buffer->[$i + 1]);
             }
 
             # Done
             $self->done;
-            delete $self->{__headers};
+            $self->_buffer([]);
             return $self->buffer;
         }
     }
-    return undef;
+    return;
 }
 
-sub proxy_authorization { return shift->header('Proxy-Authorization', @_) }
+sub proxy_authorization { shift->header('Proxy-Authorization', @_) }
 
 sub remove {
     my ($self, $name) = @_;
-    $name = lc $name;
-
-    # Initialize
-    $self->{_headers} ||= {};
-
-    # Delete
-    delete $self->{_headers}->{$name};
-
+    delete $self->_headers->{lc $name};
     return $self;
 }
 
-sub set_cookie  { return shift->header('Set-Cookie',  @_) }
-sub set_cookie2 { return shift->header('Set-Cookie2', @_) }
-sub status      { return shift->header('Status',      @_) }
+sub server      { shift->header('Server',      @_) }
+sub set_cookie  { shift->header('Set-Cookie',  @_) }
+sub set_cookie2 { shift->header('Set-Cookie2', @_) }
+sub status      { shift->header('Status',      @_) }
 
 sub to_string { shift->build(@_) }
 
-sub trailer           { return shift->header('Trailer',           @_) }
-sub transfer_encoding { return shift->header('Transfer-Encoding', @_) }
-sub user_agent        { return shift->header('User-Agent',        @_) }
+sub trailer           { shift->header('Trailer',           @_) }
+sub transfer_encoding { shift->header('Transfer-Encoding', @_) }
+sub user_agent        { shift->header('User-Agent',        @_) }
 
 1;
 __END__
@@ -286,6 +293,11 @@ L<Mojo::Headers> is a container and parser for HTTP headers.
 L<Mojo::Headers> inherits all attributes from L<Mojo::Stateful> and
 implements the following new ones.
 
+=head2 C<buffer>
+
+    my $buffer = $headers->buffer;
+    $headers   = $headers->buffer(Mojo::Buffer->new);
+
 =head2 C<connection>
 
     my $connection = $headers->connection;
@@ -300,6 +312,11 @@ implements the following new ones.
 
     my $content_length = $headers->content_length;
     $headers           = $headers->content_length(4000);
+
+=head2 C<content_transfer_encoding>
+
+    my $encoding = $headers->content_transfer_encoding;
+    $headers     = $headers->content_transfer_encoding('foo');
 
 =head2 C<content_type>
 
@@ -326,10 +343,20 @@ implements the following new ones.
     my $host = $headers->host;
     $headers = $headers->host('127.0.0.1');
 
+=head2 C<location>
+
+    my $location = $headers->location;
+    $headers     = $headers->location('http://127.0.0.1/foo');
+
 =head2 C<proxy_authorization>
 
     my $proxy_authorization = $headers->proxy_authorization;
     $headers = $headers->proxy_authorization('Basic Zm9vOmJhcg==');
+
+=head2 C<server>
+
+    my $server = $headers->server;
+    $headers   = $headers->server('Mojo');
 
 =head2 C<set_cookie>
 
@@ -366,12 +393,9 @@ implements the following new ones.
 L<Mojo::Headers> inherits all methods from L<Mojo::Stateful> and implements
 the following new ones.
 
-=head2 C<add_line>
+=head2 C<add>
 
-    $headers = $headers->add_line('Content-Type', 'text/plain');
-
-Returns the invocant.
-Appends a new line to the header.
+    $headers = $headers->add('Content-Type', 'text/plain');
 
 =head2 C<to_string>
 

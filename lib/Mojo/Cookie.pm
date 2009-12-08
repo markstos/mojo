@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package Mojo::Cookie;
 
@@ -8,79 +8,62 @@ use warnings;
 use base 'Mojo::Base';
 use overload '""' => sub { shift->to_string }, fallback => 1;
 
-use Carp;
-use Mojo::Date;
+use Carp 'croak';
+use Mojo::ByteStream 'b';
 
-__PACKAGE__->attr(
-    [qw/comment domain name path secure value version/] => (chained => 1));
+__PACKAGE__->attr([qw/name path value version/]);
+
+# Regex
+my $COOKIE_SEPARATOR_RE = qr/^\s*\,\s*/;
+my $EXPIRES_RE          = qr/^([^\;]+)\s*/;
+my $NAME_RE             = qr/
+    ^\s*           # Start
+    ([^\=\;\,]+)   # Relaxed Netscape token, allowing whitespace
+    \s*\=?\s*      # '=' (optional)
+/x;
+my $SEPARATOR_RE = qr/^\s*\;\s*/;
+my $STRING_RE    = qr/^([^\;\,]+)\s*/;
+my $VALUE_RE     = qr/
+    ^\s*               # Start
+    (\"                # Quote
+    (!:\\(!:\\\")?)*   # Value
+    \")                # Quote
+/x;
 
 # My Homer is not a communist.
 # He may be a liar, a pig, an idiot, a communist, but he is not a porn star.
-sub expires {
-    my ($self, $expires) = @_;
-    if (defined $expires) {
-        $self->{expires} = Mojo::Date->parse($expires) unless ref $expires;
-    }
-    return $self->{expires};
-}
-
-sub max_age {
-    my ($self, $max_age) = @_;
-    if (defined $max_age) {
-        $self->{max_age} = Mojo::Date->parse("$max_age");
-    }
-    return $self->{max_age} ? $self->{max_age}->epoch : undef;
-}
-
 sub to_string { croak 'Method "to_string" not implemented by subclass' }
 
 sub _tokenize {
     my ($self, $string) = @_;
 
     my (@tree, @token);
-    while (length $string) {
+    while ($string) {
 
         # Name
-        if ($string =~ s/
-            ^\s*           # Start
-            ([^\=\;\,]+)   # Relaxed Netscape token, allowing whitespace
-            \s*\=?\s*      # '=' (optional)
-        //x
-          )
-        {
+        if ($string =~ s/$NAME_RE//) {
 
             my $name = $1;
             my $value;
 
             # Quoted value
-            if ($string =~ s/
-                ^\s*               # Start
-                (\"                # Quote
-                (!:\\(!:\\\")?)*   # Value
-                \")                # Quote
-            //x
-              )
-            {
-                $value = Mojo::ByteStream->new($1)->unquote;
-            }
+            if ($string =~ s/$VALUE_RE//) { $value = b($1)->unquote }
 
             # "expires" is a special case, thank you Netscape...
-            elsif ($name =~ /expires/i && $string =~ s/^([^\;]+)\s*//) {
+            elsif ($name =~ /expires/i && $string =~ s/$EXPIRES_RE//) {
                 $value = $1;
             }
 
             # Unquoted string
-            elsif ($string =~ s/^([^\;\,]+)\s*//) {
-                $value = $1;
-            }
+            elsif ($string =~ s/$STRING_RE//) { $value = $1 }
 
             push @token, [$name, $value];
 
             # Separator
-            $string =~ s/^\s*\;\s*//;
+            $string =~ s/$SEPARATOR_RE//;
 
             # Cookie separator
-            if ($string =~ s/^\s*\,\s*//) {
+            if ($string =~ s/$COOKIE_SEPARATOR_RE//) {
                 push @tree, [@token];
                 @token = ();
             }
@@ -114,25 +97,7 @@ L<Mojo::Cookie> is a cookie base class.
 
 =head1 ATTRIBUTES
 
-=head2 C<comment>
-
-    my $comment = $cookie->comment;
-    $cookie     = $cookie->comment('test 123');
-
-=head2 C<domain>
-
-    my $domain = $cookie->domain;
-    $cookie    = $cookie->domain('localhost');
-
-=head2 C<expires>
-
-    my $expires = $cookie->expires;
-    $cookie     = $cookie->expires(time + 60);
-
-=head2 C<max_age>
-
-    my $max_age = $cookie->max_age;
-    $cookie     = $cookie->max_age(time + 60);
+L<Mojo::Cookie> implements the following attributes.
 
 =head2 C<name>
 
@@ -143,11 +108,6 @@ L<Mojo::Cookie> is a cookie base class.
 
     my $path = $cookie->path;
     $cookie  = $cookie->path('/test');
-
-=head2 C<secure>
-
-    my $secure = $cookie->secure;
-    $cookie    = $cookie->secure(1);
 
 =head2 C<value>
 

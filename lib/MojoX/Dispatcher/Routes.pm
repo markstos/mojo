@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package MojoX::Dispatcher::Routes;
 
@@ -7,118 +7,238 @@ use warnings;
 
 use base 'MojoX::Routes';
 
-use Mojo::ByteStream;
+use Mojo::ByteStream 'b';
+use Mojo::Exception;
 use Mojo::Loader;
 
 __PACKAGE__->attr(
-    disallow => (
-        chained => 1,
-        default => sub { [qw/new attr render req res stash/] }
-    )
+    controller_base_class => 'MojoX::Dispatcher::Routes::Controller');
+__PACKAGE__->attr(hidden => sub { [qw/new app attr render req res stash tx/] }
 );
-__PACKAGE__->attr(namespace => (chained => 1));
+__PACKAGE__->attr('namespace');
+
+__PACKAGE__->attr('_hidden');
+__PACKAGE__->attr(_loaded => sub { {} });
 
 # Hey. What kind of party is this? There's no booze and only one hooker.
 sub dispatch {
-    my ($self, $c, $match) = @_;
+    my ($self, $c) = @_;
 
-    $match ||= $self->match($c->tx);
+    # Match
+    my $match = $self->match($c->tx);
     $c->match($match);
 
-    # Shortcut
-    return 0 unless $match;
+    # No match
+    return 1 unless $match && @{$match->stack};
 
     # Initialize stash with captures
-    $c->stash({%{$match->captures}});
-
-    # Prepare disallow
-    unless ($self->{_disallow}) {
-        $self->{_disallow} = {};
-        $self->{_disallow}->{$_}++ for @{$self->disallow};
-    }
+    $c->stash($match->captures);
 
     # Walk the stack
-    my $stack = $match->stack;
-    for my $field (@$stack) {
+    my $e = $self->walk_stack($c);
+    return $e if $e;
 
-        # Method
-        my $method = $field->{method};
-        $method ||= $field->{action};
+    # Render
+    return $self->render($c);
+}
 
-        # Shortcut for disallowed methods
-        next if $self->{_disallow}->{$method};
-        next if index($method, '_') == 0;
+sub dispatch_callback {
+    my ($self, $c) = @_;
 
-        # Class
-        my $class = $field->{class};
-        my $controller = $field->{controller} || '';
-        unless ($class) {
-            my @class;
-            for my $part (split /-/, $controller) {
+    # Debug
+    $c->app->log->debug(qq/Dispatching callback./);
 
-                # Junk
-                next unless $part;
+    # Catch errors
+    local $SIG{__DIE__} = sub { die Mojo::Exception->new(shift) };
 
-                # Camelize
-                push @class, Mojo::ByteStream->new($part)->camelize;
-            }
-            $class = join '::', @class;
+    # Dispatch
+    my $continue;
+    my $cb = $c->match->captures->{callback};
+    eval { $continue = $cb->($c) };
+
+    # Success!
+    return 1 if $continue;
+
+    # Callback error
+    if ($@) {
+        $c->app->log->error($@);
+        return $@;
+    }
+
+    return;
+}
+
+sub dispatch_controller {
+    my ($self, $c) = @_;
+
+    # Method
+    my $method = $self->generate_method($c);
+    return unless $method;
+
+    # Class
+    my $class = $self->generate_class($c);
+    return unless $class;
+
+    # Debug
+    $c->app->log->debug(qq/Dispatching "${class}::$method"./);
+
+    # Load class
+    unless ($self->_loaded->{$class}) {
+
+        # Load
+        if (my $e = Mojo::Loader->load($class)) {
+
+            # Doesn't exist
+            return unless ref $e;
+
+            # Error
+            $c->app->log->error($e);
+            return $e;
         }
 
-        # Format
-        my $namespace = $field->{namespace} || $self->namespace;
-        $class = "${namespace}::$class";
+        # Loaded
+        $self->_loaded->{$class}++;
+    }
 
-        # Debug
-        $c->app->log->debug(
-            qq/Dispatching "$method" in "$controller($class)"/);
+    # Not a controller
+    $c->app->log->debug(qq/"$class" is not a controller./) and return
+      unless $class->isa($self->controller_base_class);
 
-        # Shortcut for invalid class and method
-        next
-          unless $class =~ /^[a-zA-Z0-9_:]+$/
-              && $method =~ /^[a-zA-Z0-9_]+$/;
+    # Catch errors
+    local $SIG{__DIE__} = sub { die Mojo::Exception->new(shift) };
+
+    # Dispatch
+    my $continue;
+    eval {
+
+        # Instantiate
+        my $new = $class->new($c);
+
+        # Get action
+        if (my $code = $new->can($method)) {
+
+            # Call action
+            $continue = $new->$code;
+
+            # Copy stash
+            $c->stash($new->stash);
+        }
+    };
+
+    # Success!
+    return 1 if $continue;
+
+    # Controller error
+    if ($@) {
+        $c->app->log->error($@);
+        return $@;
+    }
+
+    return;
+}
+
+sub generate_class {
+    my ($self, $c) = @_;
+
+    # Field
+    my $field = $c->match->captures;
+
+    # Class
+    my $class = $field->{class};
+    my $controller = $field->{controller} || '';
+    unless ($class) {
+        my @class;
+        for my $part (split /-/, $controller) {
+
+            # Junk
+            next unless $part;
+
+            # Camelize
+            push @class, b($part)->camelize;
+        }
+        $class = join '::', @class;
+    }
+
+    # Format
+    my $namespace = $field->{namespace} || $self->namespace;
+    $class = length $class ? "${namespace}::$class" : $namespace;
+
+    # Invalid
+    return unless $class =~ /^[a-zA-Z0-9_:]+$/;
+
+    return $class;
+}
+
+sub generate_method {
+    my ($self, $c) = @_;
+
+    # Field
+    my $field = $c->match->captures;
+
+    # Prepare hidden
+    unless ($self->_hidden) {
+        $self->_hidden({});
+        $self->_hidden->{$_}++ for @{$self->hidden};
+    }
+
+    my $method = $field->{method};
+    $method ||= $field->{action};
+
+    # Shortcut
+    return unless $method;
+
+    # Shortcut for hidden methods
+    return if $self->_hidden->{$method};
+    return if index($method, '_') == 0;
+
+    # Invalid
+    return unless $method =~ /^[a-zA-Z0-9_:]+$/;
+
+    return $method;
+}
+
+sub hide { push @{shift->hidden}, @_ }
+
+sub render {
+    my ($self, $c) = @_;
+
+    # Render
+    return !$c->render
+      unless $c->stash->{rendered}
+          || $c->res->code
+          || $c->tx->is_paused;
+
+    # Nothing to render
+    return;
+}
+
+sub walk_stack {
+    my ($self, $c) = @_;
+
+    # Walk the stack
+    for my $field (@{$c->match->stack}) {
+
+        # Don't cache errors
+        local $@;
 
         # Captures
         $c->match->captures($field);
 
-        # Load
-        $self->{_loaded} ||= {};
-        eval {
-            Mojo::Loader->new->load($class);
-            $self->{_loaded}->{$class}++;
-        } unless $self->{_loaded}->{$class};
-
-        # Load error
-        if ($@) {
-            $c->app->log->debug(
-                qq/Couldn't load controller class "$class":\n$@/);
-            return 0;
-        }
-
         # Dispatch
-        my $done;
-        eval {
-            die "$class is not a controller"
-              unless $class->isa('MojoX::Dispatcher::Routes::Controller');
-            $done = $class->new(ctx => $c)->$method($c);
-        };
+        my $e =
+            $field->{callback}
+          ? $self->dispatch_callback($c)
+          : $self->dispatch_controller($c);
 
-        # Controller error
-        if ($@) {
-            $c->app->log->debug(
-                qq/Controller error in "${class}::$method":\n$@/);
-            return 0;
-        }
+        # Exception
+        return $e if ref $e;
 
         # Break the chain
-        last unless $done;
+        return unless $e;
     }
 
-    # No stack, fail
-    return 0 unless @$stack;
-
-    # All seems ok
-    return 1;
+    # Done
+    return;
 }
 
 1;
@@ -143,11 +263,18 @@ L<MojoX::Dispatcher::Routes> is a dispatcher based on L<MojoX::Routes>.
 L<MojoX::Dispatcher::Routes> inherits all attributes from L<MojoX::Routes>
 and implements the follwing the ones.
 
-=head2 C<disallow>
+=head2 C<controller_base_class>
 
-    my $disallow = $dispatcher->disallow;
-    $dispatcher  = $dispatcher->disallow(
-        [qw/new attr ctx render req res stash/]
+    my $base    = $dispatcher->controller_base_class;
+    $dispatcher = $dispatcher->controller_base_class(
+        'MojoX::Dispatcher::Routes::Controller'
+    );
+
+=head2 C<hidden>
+
+    my $hidden  = $dispatcher->hidden;
+    $dispatcher = $dispatcher->hidden(
+        [qw/new attr tx render req res stash/]
     );
 
 =head2 C<namespace>
@@ -162,12 +289,36 @@ implements the follwing the ones.
 
 =head2 C<dispatch>
 
-    my $success = $dispatcher->dispatch(
-        MojoX::Dispatcher::Routes::Context->new
+    my $e = $dispatcher->dispatch(
+        MojoX::Dispatcher::Routes::Controller->new
     );
-    my $success = $dispatcher->dispatch(
-        MojoX::Dispatcher::Routes::Context->new,
-        MojoX::Routes::Match->new
-    );
+
+=head2 C<dispatch_callback>
+
+    my $e = $dispatcher->dispatch_callback($c);
+
+=head2 C<dispatch_controller>
+
+    my $e = $dispatcher->dispatch_controller($c);
+
+=head2 C<generate_class>
+
+    my $class = $dispatcher->generate_class($c);
+
+=head2 C<generate_method>
+
+    my $method = $dispatcher->genrate_method($c);
+
+=head2 C<hide>
+
+    $dispatcher = $dispatcher->hide('new');
+
+=head2 C<render>
+
+    $dispatcher->render($c);
+
+=head2 C<walk_stack>
+
+    my $e = $dispatcher->walk_stack($c);
 
 =cut

@@ -1,11 +1,11 @@
-#!perl
+#!/usr/bin/env perl
 
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 use strict;
 use warnings;
 
-use Test::More tests => 25;
+use Test::More tests => 26;
 
 # I personalized each of your meals.
 # For example, Amy: you're cute, so I baked you a pony.
@@ -48,3 +48,8 @@ is($stateful->state, 'done');
 ok($stateful->is_state(qw/another done error/));
 ok($stateful->is_done);
 ok($stateful->is_finished);
+
+# Unknown error
+$stateful = Mojo::Stateful->new;
+$stateful->state('error');
+is($stateful->error, 'Unknown state machine error.');

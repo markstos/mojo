@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package Mojolicious;
 
@@ -7,52 +7,28 @@ use warnings;
 
 use base 'Mojo';
 
-use Mojo::Loader;
+use Mojolicious::Commands;
 use Mojolicious::Dispatcher;
 use Mojolicious::Renderer;
 use MojoX::Dispatcher::Static;
 use MojoX::Types;
+use Time::HiRes ();
 
-__PACKAGE__->attr(
-    ctx_class => (
-        chained => 1,
-        default => 'Mojolicious::Context'
-    )
-);
-__PACKAGE__->attr(
-    mode => (
-        chained => 1,
-        default => sub { ($ENV{MOJO_MODE} || 'development') }
-    )
-);
-__PACKAGE__->attr(
-    renderer => (
-        chained => 1,
-        default => sub { Mojolicious::Renderer->new }
-    )
-);
-__PACKAGE__->attr(
-    routes => (
-        chained => 1,
-        default => sub { Mojolicious::Dispatcher->new }
-    )
-);
-__PACKAGE__->attr(
-    static => (
-        chained => 1,
-        default => sub { MojoX::Dispatcher::Static->new }
-    )
-);
-__PACKAGE__->attr(
-    types => (
-        chained => 1,
-        default => sub { MojoX::Types->new }
-    )
-);
+__PACKAGE__->attr(controller_class => 'Mojolicious::Controller');
+__PACKAGE__->attr(mode => sub { ($ENV{MOJO_MODE} || 'development') });
+__PACKAGE__->attr(renderer => sub { Mojolicious::Renderer->new });
+__PACKAGE__->attr(routes   => sub { Mojolicious::Dispatcher->new });
+__PACKAGE__->attr(static   => sub { MojoX::Dispatcher::Static->new });
+__PACKAGE__->attr(types    => sub { MojoX::Types->new });
 
-# The usual constructor stuff
+# It's just like the story of the grasshopper and the octopus.
+# All year long, the grasshopper kept burying acorns for the winter,
+# while the octopus mooched off his girlfriend and watched TV.
+# But then the winter came, and the grasshopper died,
+# and the octopus ate all his acorns.
+# And also he got a racecar. Is any of this getting through to you?
 sub new {
-    my $self = shift->SUPER::new();
+    my $self = shift->SUPER::new(@_);
 
     # Namespace
     $self->routes->namespace(ref $self);
@@ -62,56 +38,111 @@ sub new {
     $self->static->types($self->types);
 
     # Root
-    $self->home->detect(ref $self);
     $self->renderer->root($self->home->rel_dir('templates'));
     $self->static->root($self->home->rel_dir('public'));
+
+    # Hide our methods
+    $self->routes->hide(qw/client param pause redirect_to render_json/);
+    $self->routes->hide(qw/render_inner render_partial render_text resume/);
+    $self->routes->hide('url_for');
 
     # Mode
     my $mode = $self->mode;
 
     # Log file
-    $self->log->path($self->home->rel_file("log/$mode.log"));
+    $self->log->path($self->home->rel_file("log/$mode.log"))
+      if -w $self->home->rel_file('log');
 
     # Run mode
     $mode = $mode . '_mode';
-    $self->$mode if $self->can($mode);
+    eval { $self->$mode } if $self->can($mode);
+    $self->log->error(qq/Mode "$mode" failed: $@/) if $@;
 
     # Startup
-    $self->startup(@_);
-
-    # Load context class
-    Mojo::Loader->new->load($self->ctx_class);
+    eval { $self->startup(@_) };
+    $self->log->error("Startup failed: $@") if $@;
 
     return $self;
 }
 
-sub build_ctx {
-    my $self = shift;
-    return $self->ctx_class->new(app => $self, tx => shift);
-}
-
-# You could just overload this method
+# The default dispatchers with exception handling
 sub dispatch {
     my ($self, $c) = @_;
 
+    # New request
+    my $path = $c->req->url->path;
+    $path ||= '/';
+    $self->log->debug(qq/*** Request for "$path". ***/);
+
     # Try to find a static file
-    my $done = $self->static->dispatch($c);
+    my $e = $self->static->dispatch($c);
 
     # Use routes if we don't have a response yet
-    $done ||= $self->routes->dispatch($c);
+    $e = $self->routes->dispatch($c) if $e;
+
+    # Exception
+    if (ref $e) {
+        $c->render(
+            template  => 'exception',
+            format    => 'html',
+            status    => 500,
+            exception => $e
+        ) or $self->static->serve_500($c);
+    }
 
     # Nothing found
-    $self->static->serve_404($c) unless $done;
+    elsif ($e) {
+        $c->render(
+            template => 'not_found',
+            format   => 'html',
+            status   => 404
+        ) or $self->static->serve_404($c);
+    }
 }
 
 # Bite my shiny metal ass!
 sub handler {
     my ($self, $tx) = @_;
 
-    # Build context and dispatch
-    $self->dispatch($self->build_ctx($tx));
+    # Start timer
+    my $start = [Time::HiRes::gettimeofday()];
 
-    return $tx;
+    # Load controller class
+    my $class = $self->controller_class;
+    if (my $e = Mojo::Loader->load($class)) {
+        $self->log->error(
+            ref $e
+            ? qq/Can't load controller class "$class": $e/
+            : qq/Controller class "$class" doesn't exist./
+        );
+    }
+
+    # Build default controller and process
+    eval { $self->process($class->new(app => $self, tx => $tx)) };
+    $self->log->error("Processing request failed: $@") if $@;
+
+    # End timer
+    my $elapsed = sprintf '%f',
+      Time::HiRes::tv_interval($start, [Time::HiRes::gettimeofday()]);
+    my $rps = $elapsed == 0 ? '??' : sprintf '%.3f', 1 / $elapsed;
+    $self->log->debug("Request took $elapsed seconds ($rps/s).");
+}
+
+# This will run for each request
+sub process { shift->dispatch(@_) }
+
+# Start command system
+sub start {
+    my $class = shift;
+
+    # We can be called on class or instance
+    $class = ref $class || $class;
+
+    # We are the application
+    $ENV{MOJO_APP} ||= $class;
+
+    # Start!
+    Mojolicious::Commands->start(@_);
 }
 
 # This will run once at startup
@@ -139,9 +170,10 @@ Mojolicious - Web Framework
 
 =head1 DESCRIPTION
 
-L<Mojolicous> is a web framework built upon L<Mojo>.
+L<Mojolicous> is a MVC web framework built upon L<Mojo>.
 
-See L<Mojo::Manual::Mojolicious> for user friendly documentation.
+For userfriendly documentation see L<Mojolicious::Book> and
+L<Mojolicious::Lite>.
 
 =head1 ATTRIBUTES
 
@@ -152,15 +184,6 @@ following new ones.
 
     my $mode = $mojo->mode;
     $mojo    = $mojo->mode('production');
-
-Returns the current mode if called without arguments.
-Returns the invocant if called with arguments.
-Defaults to C<$ENV{MOJO_MODE}> or C<development>.
-
-    my $mode = $mojo->mode;
-    if ($mode =~ m/^dev/) {
-        do_debug_output();
-    }
 
 =head2 C<renderer>
 
@@ -191,15 +214,6 @@ new ones.
 
     my $mojo = Mojolicious->new;
 
-Returns a new L<Mojolicious> object.
-This method will call the method C<${mode}_mode> if it exists.
-(C<$mode> being the value of the attribute C<mode>).
-For example in production mode, C<production_mode> will be called.
-
-=head2 C<build_ctx>
-
-    my $c = $mojo->build_ctx($tx);
-
 =head2 C<dispatch>
 
     $mojo->dispatch($c);
@@ -207,6 +221,15 @@ For example in production mode, C<production_mode> will be called.
 =head2 C<handler>
 
     $tx = $mojo->handler($tx);
+
+=head2 C<process>
+
+    $mojo->process($c);
+
+=head2 C<start>
+
+    Mojolicious->start;
+    Mojolicious->start('daemon');
 
 =head2 C<startup>
 

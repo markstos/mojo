@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package Mojo::Server::Daemon;
 
@@ -6,41 +6,72 @@ use strict;
 use warnings;
 
 use base 'Mojo::Server';
+use bytes;
 
 use Carp 'croak';
-use IO::Select;
-use IO::Socket;
+use Mojo::IOLoop;
+use Mojo::Transaction::Pipeline;
+use Scalar::Util qw/isweak weaken/;
 
-__PACKAGE__->attr(keep_alive_timeout => (chained => 1, default => 15));
-__PACKAGE__->attr(listen_queue_size  => (chained => 1, default => SOMAXCONN));
-__PACKAGE__->attr(max_clients        => (chained => 1, default => 1000));
-__PACKAGE__->attr(max_keep_alive_requests => (chained => 1, default => 100));
-__PACKAGE__->attr(port                    => (chained => 1, default => 3000));
+__PACKAGE__->attr([qw/address group listen_queue_size user/]);
+__PACKAGE__->attr(ioloop => sub { Mojo::IOLoop->new });
+__PACKAGE__->attr(keep_alive_timeout      => 15);
+__PACKAGE__->attr(max_clients             => 1000);
+__PACKAGE__->attr(max_keep_alive_requests => 100);
+__PACKAGE__->attr(port                    => 3000);
 
-sub accept_lock { return 1 }
+__PACKAGE__->attr(_connections => sub { {} });
 
-sub accept_unlock { return 1 }
-
-sub listen {
+sub prepare_ioloop {
     my $self = shift;
 
-    # Create socket
-    my $port = $self->port;
-    $self->{listen} ||= IO::Socket::INET->new(
-        Listen    => $self->listen_queue_size,
-        LocalPort => $port,
-        Proto     => 'tcp',
-        ReuseAddr => 1,
-        Type      => SOCK_STREAM
-    ) or croak "Can't create listen socket: $!";
+    my $options = {};
 
-    # Non blocking
-    $self->{listen}->blocking(0);
+    # Address
+    my $address = $self->address;
+    $options->{address} = $address if $address;
+    $address ||= '127.0.0.1';
 
-    $self->app->log->info("Server started (http://127.0.0.1:$port)");
+    # Port
+    my $port = $options->{port} = $self->port;
+
+    # Listen queue size
+    my $queue = $self->listen_queue_size;
+    $options->{queue_size} = $queue if $queue;
+
+    # Listen
+    $self->ioloop->listen($options);
+
+    # Log
+    $self->app->log->info("Server started (http://$address:$port)");
 
     # Friendly message
-    print "Server available at http://127.0.0.1:$port.\n";
+    print "Server available at http://$address:$port.\n";
+
+    # Max clients
+    $self->ioloop->max_clients($self->max_clients);
+
+    # Weaken
+    weaken $self;
+
+    # Accept callback
+    $self->ioloop->accept_cb(
+        sub {
+            my ($loop, $id) = @_;
+
+            # Add new connection
+            $self->_connections->{$id} = {};
+
+            # Keep alive timeout
+            $loop->connection_timeout($id => $self->keep_alive_timeout);
+
+            # Callbacks
+            $loop->error_cb($id => sub { $self->_error(@_) });
+            $loop->hup_cb($id => sub { $self->_hup(@_) });
+            $loop->read_cb($id => sub { $self->_read(@_) });
+            $loop->write_cb($id => sub { $self->_write(@_) });
+        }
+    );
 }
 
 # 40 dollars!? This better be the best damn beer ever..
@@ -48,317 +79,200 @@ sub listen {
 sub run {
     my $self = shift;
 
-    $SIG{HUP} = $SIG{PIPE} = 'IGNORE';
+    # User and group
+    $self->setuidgid;
 
-    # Listen
-    $self->listen;
+    # Prepare ioloop
+    $self->prepare_ioloop;
 
-    # Spin
-    $self->spin while 1;
+    # Start loop
+    $self->ioloop->start;
 }
 
-sub spin {
+sub setuidgid {
     my $self = shift;
 
-    $self->_prepare_connections;
-    $self->_prepare_transactions;
-    my ($reader, $writer) = $self->_prepare_select;
+    # Group
+    if (my $group = $self->group) {
+        if (my $gid = (getgrnam($group))[2]) {
 
-    # Select
-    my ($read, $write, undef) =
-      IO::Select->select($reader, $writer, undef, 5);
-    $read  ||= [];
-    $write ||= [];
+            # Cleanup
+            undef $!;
 
-    # Write
-    if (@$write) { $self->_write($write) }
-
-    # Read
-    elsif (@$read) { $self->_read($read) }
-}
-
-sub _drop_connection {
-    my ($self, $name) = @_;
-    delete $self->{_reverse}->{$self->{_connections}->{$name}};
-    delete $self->{_connections}->{$name};
-}
-
-sub _prepare_connections {
-    my $self = shift;
-
-    $self->{_accepted}    ||= [];
-    $self->{_connections} ||= {};
-
-    # Accept
-    my @accepted = ();
-    for my $accept (@{$self->{_accepted}}) {
-
-        # Not yet connected
-        unless ($accept->{socket}->connected) {
-            push @accepted, $accept;
-            next;
-        }
-
-        # Connected
-        $accept->{socket}->blocking(0);
-        next unless my $name = $self->_socket_name($accept->{socket});
-        $self->{_reverse}->{$accept->{socket}} = $name;
-        $self->{_connections}->{$name} = $accept;
-    }
-    $self->{_accepted} = [@accepted];
-}
-
-sub _prepare_select {
-    my $self = shift;
-
-    my @read    = ();
-    my $clients = keys %{$self->{_connections}};
-
-    # Select listen socket if we get the lock on it
-    if (($clients < $self->max_clients) && $self->accept_lock(!$clients)) {
-        @read = ($self->{listen});
-    }
-
-    my @write = ();
-
-    # Sort read/write handles and timeouts
-    for my $name (keys %{$self->{_connections}}) {
-        my $connection = $self->{_connections}->{$name};
-
-        # Transaction
-        my $tx = $connection->{tx};
-
-        # Keep alive timeout
-        my $timeout = time - $connection->{time};
-        if ($self->keep_alive_timeout < $timeout) {
-            $self->_drop_connection($name);
-            next;
-        }
-
-        # No transaction in progress
-        unless ($tx) {
-
-            # Keep alive request limit
-            if ($connection->{requests} >= $self->max_keep_alive_requests) {
-                $self->_drop_connection($name);
-
-            }
-
-            # Keep alive
-            else { unshift @read, $connection->{socket} }
-            next;
-        }
-
-        # Read
-        if ($tx->is_state('read')) { unshift @read, $tx->connection }
-
-        # Write
-        if ($tx->is_state(qw/write_start_line write_headers write_body/)) {
-            unshift @write, $tx->connection;
+            # Switch
+            $) = $gid;
+            croak qq/Can't switch to effective group "$group": $!/ if $!;
         }
     }
 
-    # Prepare select
-    my $reader = IO::Select->new(@read);
-    my $writer = @write ? IO::Select->new(@write) : undef;
+    # User
+    if (my $user = $self->user) {
+        if (my $uid = (getpwnam($user))[2]) {
 
-    return $reader, $writer;
+            # Cleanup
+            undef $!;
+
+            # Switch
+            $> = $uid;
+            croak qq/Can't switch to effective user "$user": $!/ if $!;
+        }
+    }
+
+    return $self;
 }
 
-sub _prepare_transactions {
-    my $self = shift;
+sub _create_pipeline {
+    my ($self, $id) = @_;
 
-    # Prepare transactions
-    for my $name (keys %{$self->{_connections}}) {
-        my $connection = $self->{_connections}->{$name};
+    # Connection
+    my $conn = $self->_connections->{$id};
 
-        # Cleanup dead connection
-        unless ($connection->{socket}->connected) {
-            $self->_drop_connection($name);
-            next;
-        }
+    # New pipeline
+    my $p = Mojo::Transaction::Pipeline->new;
+    $p->connection($id);
 
-        # Transaction
-        my $tx = $connection->{tx};
+    # Store connection information in pipeline
+    my $local = $self->ioloop->local_info($id);
+    $p->local_address($local->{address});
+    $p->local_port($local->{port});
+    my $remote = $self->ioloop->remote_info($id);
+    $p->remote_address($remote->{address});
+    $p->remote_port($remote->{port});
 
-        # Just a keep alive, no transaction
-        next unless $tx;
+    # Weaken
+    weaken $self;
+    weaken $conn;
 
-        # Writing
-        if ($tx->is_state('write')) {
+    # State change callback
+    $p->state_cb(
+        sub {
+            my $p = shift;
 
-            # Connection header
-            unless ($tx->res->headers->connection) {
-                if ($tx->keep_alive) {
-                    $tx->res->headers->connection('Keep-Alive');
+            # Finish
+            if ($p->is_finished) {
+
+                # Close connection
+                if (!$conn->{pipeline}->keep_alive) {
+                    $self->_drop($id);
+                    $self->ioloop->finish($id);
                 }
-                else {
-                    $tx->res->headers->connection('Close');
+
+                # End pipeline
+                else { delete $conn->{pipeline} }
+            }
+
+            # Writing?
+            $p->server_is_writing
+              ? $self->ioloop->writing($id)
+              : $self->ioloop->not_writing($id);
+        }
+    );
+
+    # Transaction builder callback
+    $p->build_tx_cb(
+        sub {
+
+            # Build transaction
+            my $tx = $self->build_tx_cb->($self);
+
+            # Handler callback
+            $tx->handler_cb(
+                sub {
+
+                    # Weaken
+                    weaken $tx unless isweak $tx;
+
+                    # Handler
+                    $self->handler_cb->($self, $tx);
                 }
-            }
+            );
 
-            # Ready for next state
-            $tx->state('write_start_line');
-            $tx->{_to_write} = $tx->res->start_line_length;
+            # Continue handler callback
+            $tx->continue_handler_cb(
+                sub {
+
+                    # Weaken
+                    weaken $tx;
+
+                    # Continue handler
+                    $self->continue_handler_cb->($self, $tx);
+                }
+            );
+
+            return $tx;
         }
+    );
 
-        # Response start line
-        if ($tx->is_state('write_start_line') && $tx->{_to_write} <= 0) {
-            $tx->state('write_headers');
-            $tx->{_offset}   = 0;
-            $tx->{_to_write} = $tx->res->header_length;
-        }
+    # New request on the connection
+    $conn->{requests}++;
 
-        # Response headers
-        if ($tx->is_state('write_headers') && $tx->{_to_write} <= 0) {
-            $tx->state('write_body');
-            $tx->{_offset}   = 0;
-            $tx->{_to_write} = $tx->res->body_length;
-        }
+    # Kept alive if we have more than one request on the connection
+    $p->kept_alive(1) if $conn->{requests} > 1;
 
-        # Response body
-        if ($tx->is_state('write_body') && $tx->{_to_write} <= 0) {
+    return $p;
+}
 
-            # Continue done
-            if (defined $tx->continued && $tx->continued == 0) {
-                $tx->continued(1);
-                $tx->state('read');
-                $tx->done unless $tx->res->code == 100;
-                $tx->res->code(0);
-                next;
-            }
+sub _drop {
+    my ($self, $id) = @_;
 
-            # Done
-            delete $connection->{tx};
-            $self->_drop_connection($name) unless $tx->keep_alive;
-        }
-    }
+    # Drop connection
+    delete $self->_connections->{$id};
+}
+
+sub _error {
+    my ($self, $loop, $id, $error) = @_;
+
+    # Drop
+    $self->_drop($id);
+}
+
+sub _hup {
+    my ($self, $loop, $id) = @_;
+
+    # Drop
+    $self->_drop($id);
 }
 
 sub _read {
-    my ($self, $sockets) = @_;
+    my ($self, $loop, $id, $chunk) = @_;
 
-    my $socket = $sockets->[0];
+    # Pipeline
+    my $p = $self->_connections->{$id}->{pipeline}
+      ||= $self->_create_pipeline($id);
 
-    # Accept
-    unless ($socket->connected) {
-        $socket = $socket->accept;
-        $self->accept_unlock;
-        return 0 unless $socket;
-        push @{$self->{_accepted}},
-          { requests => 0,
-            socket   => $socket,
-            time     => time
-          };
-        return 1;
+    # Read
+    $p->server_read($chunk);
+
+    # State machine
+    $p->server_spin;
+
+    # Add transactions to the pipe for leftovers
+    if (my $leftovers = $p->server_leftovers) {
+
+        # Read leftovers
+        $p->server_read($leftovers);
     }
 
-    return 0 unless my $name = $self->_socket_name($socket);
-
-    my $connection = $self->{_connections}->{$name};
-    unless ($connection->{tx}) {
-        my $tx = $connection->{tx} ||= $self->build_tx_cb->($self);
-        $tx->connection($socket);
-        $tx->state('read');
-        $connection->{requests}++;
-        $tx->kept_alive(1) if $connection->{requests} > 1;
-
-        # Last keep alive request?
-        $tx->res->headers->connection('Close')
-          if $connection->{requests} >= $self->max_keep_alive_requests;
-    }
-
-    my $tx  = $connection->{tx};
-    my $req = $tx->req;
-
-    # Read request
-    my $read = $socket->sysread(my $buffer, 4096, 0);
-
-    # Read error
-    unless (defined $read && $buffer) {
-        $self->_drop_connection($name);
-        return 1;
-    }
-
-    # Parse
-    $req->parse($buffer);
-
-    # Expect 100 Continue?
-    if ($req->content->is_state('body') && !defined $tx->continued) {
-        if (($req->headers->expect || '') =~ /100-continue/i) {
-            $tx->state('write');
-            $tx->continued(0);
-            $self->continue_handler_cb->($self, $tx);
-        }
-    }
-
-    # EOF
-    if (($read == 0) || $req->is_finished) {
-        $tx->state('write');
-
-        # Handle
-        $self->handler_cb->($self, $tx);
-    }
-
-    $connection->{time} = time;
-}
-
-sub _socket_name {
-    my ($self, $s) = @_;
-
-    # Cache
-    return $self->{_reverse}->{$s} if $self->{_reverse}->{$s};
-
-    # Connected?
-    return undef unless $s->connected;
-
-    # Temporary workaround for win32 weirdness
-    my $n = '';
-    for my $h ($s->sockaddr, $s->sockport, $s->peeraddr, $s->peerport) {
-        $n .= unpack 'H*', $h;
-    }
-    return $n;
+    # Last keep alive request?
+    $p->server_tx->res->headers->connection('Close')
+      if $p->server_tx
+          && $self->_connections->{$id}->{requests}
+          >= $self->max_keep_alive_requests;
 }
 
 sub _write {
-    my ($self, $sockets) = @_;
+    my ($self, $loop, $id) = @_;
 
-    my ($name, $tx, $res, $chunk);
+    # Pipeline
+    return unless my $p = $self->_connections->{$id}->{pipeline};
 
-    # Check for content
-    for my $socket (@$sockets) {
-        next unless $name = $self->_socket_name($socket);
-        my $connection = $self->{_connections}->{$name};
-        $tx  = $connection->{tx};
-        $res = $tx->res;
+    # Get chunk
+    my $chunk = $p->server_get_chunk;
 
-        # Body
-        $chunk = $res->get_body_chunk($tx->{_offset} || 0)
-          if $tx->is_state('write_body');
+    # State machine
+    $p->server_spin;
 
-        # Headers
-        $chunk = $res->get_header_chunk($tx->{_offset} || 0)
-          if $tx->is_state('write_headers');
-
-        # Start line
-        $chunk = $res->get_start_line_chunk($tx->{_offset} || 0)
-          if $tx->is_state('write_start_line');
-
-        # Content generator ready?
-        last if defined $chunk;
-    }
-    return 0 unless $name;
-
-    # Write chunk
-    return 0 unless $tx->connection->connected;
-    my $written = $tx->connection->syswrite($chunk, length $chunk);
-    $tx->error("Can't write request: $!") unless defined $written;
-    return 1 if $tx->has_error;
-
-    $tx->{_to_write} -= $written;
-    $tx->{_offset} += $written;
-
-    $self->{_connections}->{$name}->{time} = time;
+    return $chunk;
 }
 
 1;
@@ -385,6 +299,21 @@ L<Mojo::Server::Daemon> is a simple and portable async io based HTTP server.
 L<Mojo::Server::Daemon> inherits all attributes from L<Mojo::Server> and
 implements the following new ones.
 
+=head2 C<address>
+
+    my $address = $daemon->address;
+    $daemon     = $daemon->address('127.0.0.1');
+
+=head2 C<group>
+
+    my $group = $daemon->group;
+    $daemon   = $daemon->group('users');
+
+=head2 C<ioloop>
+
+    my $loop = $daemon->ioloop;
+    $daemon  = $daemon->ioloop(Mojo::IOLoop->new);
+
 =head2 C<keep_alive_timeout>
 
     my $keep_alive_timeout = $daemon->keep_alive_timeout;
@@ -410,30 +339,26 @@ implements the following new ones.
     my $port = $daemon->port;
     $daemon  = $daemon->port(3000);
 
+=head2 C<user>
+
+    my $user = $daemon->user;
+    $daemon  = $daemon->user('web');
+
 =head1 METHODS
 
 L<Mojo::Server::Daemon> inherits all methods from L<Mojo::Server> and
 implements the following new ones.
 
-=head2 C<accept_lock>
+=head2 C<prepare_ioloop>
 
-    my $locked = $daemon->accept_lock;
-    my $locked = $daemon->accept_lock(1);
-
-=head2 C<accept_unlock>
-
-    $daemon->accept_unlock;
-
-=head2 C<listen>
-
-    $daemon->listen;
+    $daemon->prepare_ioloop;
 
 =head2 C<run>
 
     $daemon->run;
 
-=head2 C<spin>
+=head2 C<setuidgid>
 
-    $daemon->spin;
+    $daemon->setuidgid;
 
 =cut

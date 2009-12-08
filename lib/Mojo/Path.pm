@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package Mojo::Path;
 
@@ -8,16 +8,11 @@ use warnings;
 use base 'Mojo::Base';
 use overload '""' => sub { shift->to_string }, fallback => 1;
 
-use Mojo::ByteStream;
+use Mojo::ByteStream 'b';
 use Mojo::URL;
 
-__PACKAGE__->attr(
-    [qw/leading_slash trailing_slash/] => (
-        chained => 1,
-        default => 0
-    )
-);
-__PACKAGE__->attr(parts => (chained => 1, default => sub { [] }));
+__PACKAGE__->attr([qw/leading_slash trailing_slash/] => 0);
+__PACKAGE__->attr(parts => sub { [] });
 
 sub new {
     my $self = shift->SUPER::new();
@@ -32,9 +27,7 @@ sub append {
         my $value = "$_";
 
         # *( pchar / "/" / "?" )
-        $value =
-          Mojo::ByteStream->new($value)->url_escape($Mojo::URL::PCHAR)
-          ->to_string;
+        $value = b($value)->url_escape($Mojo::URL::PCHAR)->to_string;
 
         push @{$self->parts}, $value;
     }
@@ -97,7 +90,7 @@ sub parse {
     for my $part (split '/', $path) {
 
         # Garbage
-        next unless $part;
+        next unless length $part;
 
         # Store
         push @parts, $part;
@@ -116,9 +109,7 @@ sub to_string {
     for my $part (@{$self->parts}) {
 
         # *( pchar / "/" / "?" )
-        push @path,
-          Mojo::ByteStream->new($part)->url_escape($Mojo::URL::PCHAR)
-          ->to_string;
+        push @path, b($part)->url_escape($Mojo::URL::PCHAR)->to_string;
     }
 
     # Format
@@ -148,6 +139,8 @@ Mojo::Path - Path
 L<Mojo::Path> is a container for URL paths.
 
 =head1 ATTRIBUTES
+
+L<Mojo::Path> implements the following attributes.
 
 =head2 C<leading_slash>
 

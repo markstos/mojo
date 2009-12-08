@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package MojoX::Dispatcher::Static;
 
@@ -9,43 +9,44 @@ use base 'Mojo::Base';
 
 use File::stat;
 use File::Spec;
-use Mojo::Content;
-use Mojo::File;
+use Mojo::Asset::File;
+use Mojo::Content::Single;
+use Mojo::Path;
 use MojoX::Types;
 
-__PACKAGE__->attr(prefix => (chained => 1));
-__PACKAGE__->attr(
-    types => (
-        chained => 1,
-        default => sub { MojoX::Types->new }
-    )
-);
-__PACKAGE__->attr(root => (chained => 1));
+__PACKAGE__->attr([qw/prefix root/]);
+__PACKAGE__->attr(types => sub { MojoX::Types->new });
 
 # Valentine's Day's coming? Aw crap! I forgot to get a girlfriend again!
 sub dispatch {
     my ($self, $c) = @_;
 
+    # Canonical path
+    my $path = $c->req->url->path->clone->canonicalize->to_string;
+
     # Prefix
     if (my $prefix = $self->prefix) {
-        return 0 unless $c->req->url->path =~ /^$prefix.*/;
+        return 1 unless $path =~ s/^$prefix//;
     }
 
-    # Path
-    my @parts = @{$c->req->url->path->clone->canonicalize->parts};
+    # Parts
+    my @parts = @{Mojo::Path->parse($path)->parts};
 
     # Shortcut
-    return 0 unless @parts;
+    return 1 unless @parts;
+
+    # Prevent directory traversal
+    return 1 if $parts[0] eq '..';
 
     # Serve static file
     return $self->serve($c, File::Spec->catfile(@parts));
 }
 
 sub serve {
-    my ($self, $c, $path) = @_;
+    my ($self, $c, $rel) = @_;
 
     # Append path to root
-    $path = File::Spec->catfile($self->root, split('/', $path));
+    my $path = File::Spec->catfile($self->root, split('/', $rel));
 
     # Extension
     $path =~ /\.(\w+)$/;
@@ -58,7 +59,7 @@ sub serve {
     if (-f $path) {
 
         # Log
-        $c->app->log->debug(qq/Serving static file "$path"/);
+        $c->app->log->debug(qq/Serving static file "$rel"./);
 
         my $res = $c->res;
         if (-r $path) {
@@ -69,20 +70,26 @@ sub serve {
             if (my $date = $req->headers->header('If-Modified-Since')) {
 
                 # Not modified
-                if (Mojo::Date->new($date)->epoch == $stat->mtime) {
+                my $since = Mojo::Date->new($date)->epoch;
+                if (defined $since && $since == $stat->mtime) {
 
                     # Log
-                    $c->app->log->debug('File not modified');
+                    $c->app->log->debug('File not modified.');
 
                     $res->code(304);
                     $res->headers->remove('Content-Type');
                     $res->headers->remove('Content-Length');
                     $res->headers->remove('Content-Disposition');
-                    return 1;
+                    return;
                 }
             }
 
-            $res->content(Mojo::Content->new(file => Mojo::File->new));
+            $res->content(
+                Mojo::Content::Single->new(
+                    asset   => Mojo::Asset::File->new,
+                    headers => $res->headers
+                )
+            );
             $res->code(200);
 
             # Last modified
@@ -90,32 +97,33 @@ sub serve {
                 Mojo::Date->new($stat->mtime));
 
             $res->headers->content_type($type);
-            $res->content->file->path($path);
-            return 1;
+            $res->content->asset->path($path);
+
+            return;
         }
 
         # Exists, but is forbidden
         else {
 
             # Log
-            $c->app->log->debug('File forbidden');
+            $c->app->log->debug('File forbidden.');
 
             $res->code(403);
-            return 1;
+            return;
         }
     }
 
-    return 0;
+    return 1;
 }
 
 sub serve_404 { shift->serve_error(shift, 404, shift) }
 sub serve_500 { shift->serve_error(shift, 500, shift) }
 
 sub serve_error {
-    my ($self, $c, $code, $path) = @_;
+    my ($self, $c, $code, $rel) = @_;
 
     # Shortcut
-    return 0 unless $c && $code;
+    return 1 unless $c && $code;
 
     my $res = $c->res;
 
@@ -123,20 +131,21 @@ sub serve_error {
     $res->code($code);
 
     # Default to "code.html"
-    $path ||= "$code.html";
+    $rel ||= "$code.html";
 
     # Append path to root
-    $path = File::Spec->catfile($self->root, split('/', $path));
+    my $path = File::Spec->catfile($self->root, split('/', $rel));
 
     # File
     if (-r $path) {
 
         # Log
-        $c->app->log->debug(qq/Serving error file "$path"/);
+        $c->app->log->debug(qq/Serving error file "$rel"./);
 
         # File
-        $res->content(Mojo::Content->new(file => Mojo::File->new));
-        $res->content->file->path($path);
+        $res->content(
+            Mojo::Content::Single->new(asset => Mojo::Asset::File->new));
+        $res->content->asset->path($path);
 
         # Extension
         $path =~ /\.(\w+)$/;
@@ -151,15 +160,13 @@ sub serve_error {
     elsif ($code == 404) {
 
         # Log
-        $c->app->log->debug('Serving 404 error');
+        $c->app->log->debug('Serving 404 error.');
 
         $res->headers->content_type('text/html');
         $res->body(<<'EOF');
-<!doctype html>
+<!doctype html><html>
     <head><title>File Not Found</title></head>
-    <body>
-        <h2>File Not Found</h2>
-    </body>
+    <body><h2>File Not Found</h2></body>
 </html>
 EOF
     }
@@ -168,20 +175,18 @@ EOF
     else {
 
         # Log
-        $c->app->log->debug(qq/Serving error "$code"/);
+        $c->app->log->debug(qq/Serving error "$code"./);
 
         $res->headers->content_type('text/html');
         $res->body(<<'EOF');
-<!doctype html>
+<!doctype html><html>
     <head><title>Internal Server Error</title></head>
-    <body>
-        <h2>Internal Server Error</h2>
-    </body>
+    <body><h2>Internal Server Error</h2></body>
 </html>
 EOF
     }
 
-    return 1;
+    return;
 }
 
 1;
@@ -207,33 +212,22 @@ L<MojoX::Dispatcher::Static> is a dispatcher for static files.
 
 =head2 ATTRIBUTES
 
+L<MojoX::Dispatcher::Static> implements the following attributes.
+
 =head2 C<prefix>
 
     my $prefix  = $dispatcher->prefix;
     $dispatcher = $dispatcher->prefix('/static');
-
-Returns the path prefix if called without arguments.
-Returns the invocant if called with arguments.
-If defined, files will only get served for url paths beginning with this
-prefix.
 
 =head2 C<types>
 
     my $types   = $dispatcher->types;
     $dispatcher = $dispatcher->types(MojoX::Types->new);
 
-Returns a L<Mojo::Types> object if called without arguments.
-Returns the invocant if called with arguments.
-If no type can be determined, C<text/plain> will be used.
-
 =head2 C<root>
 
     my $root    = $dispatcher->root;
     $dispatcher = $dispatcher->root('/foo/bar/files');
-
-Returns the root directory from which files get served if called without
-arguments.
-Returns the invocant if called with arguments.
 
 =head1 METHODS
 
@@ -244,22 +238,9 @@ implements the follwing the ones.
 
     my $success = $dispatcher->dispatch($c);
 
-Returns true if a file matching the request could be found and a response be
-prepared.
-Returns false otherwise.
-Expects a L<MojoX::Context> object as first argument.
-
 =head2 C<serve>
 
     my $success = $dispatcher->serve($c, 'foo/bar.html');
-
-Returns true if a readable file could be found under C<root> and a response
-be prepared.
-Returns false otherwise.
-Expects a L<MojoX::Context> object and a path as arguments.
-If no type can be determined, C<text/plain> will be used.
-A C<Last-Modified> header will always be set according to the last modified
-time of the file.
 
 =head2 C<serve_404>
 

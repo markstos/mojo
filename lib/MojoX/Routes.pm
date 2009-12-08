@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package MojoX::Routes;
 
@@ -10,68 +10,129 @@ use base 'Mojo::Base';
 use Mojo::URL;
 use MojoX::Routes::Match;
 use MojoX::Routes::Pattern;
+use Scalar::Util 'weaken';
 
 use constant DEBUG => $ENV{MOJOX_ROUTES_DEBUG} || 0;
 
-__PACKAGE__->attr([qw/block inline name/] => (chained => 1));
-__PACKAGE__->attr(children => (chained => 1, default => sub { [] }));
-__PACKAGE__->attr(parent => (chained => 1, weak => 1));
-__PACKAGE__->attr(
-    pattern => (
-        chained => 1,
-        default => sub { MojoX::Routes::Pattern->new }
-    )
-);
+__PACKAGE__->attr([qw/block inline name parent/]);
+__PACKAGE__->attr([qw/children conditions/] => sub { [] });
+__PACKAGE__->attr(dictionary                => sub { {} });
+__PACKAGE__->attr(pattern => sub { MojoX::Routes::Pattern->new });
 
 sub new {
     my $self = shift->SUPER::new();
+
+    # Parse
     $self->parse(@_);
+
+    # Method condition
+    $self->add_condition(
+        method => sub {
+            my ($r, $tx, $captures, $methods) = @_;
+
+            # Methods?
+            return unless $methods && ref $methods eq 'ARRAY';
+
+            # Match
+            for my $method (@$methods) {
+                return $captures if $method eq lc $tx->req->method;
+            }
+
+            # Nothing
+            return;
+        }
+    );
+
     return $self;
 }
 
-sub bridge { return shift->route(@_)->inline(1) }
+sub add_condition {
+    my $self = shift;
+
+    # Merge
+    my $dictionary = ref $_[0] ? $_[0] : {@_};
+    $dictionary = {%{$self->dictionary}, %$dictionary};
+    $self->dictionary($dictionary);
+
+    return $self;
+}
+
+sub bridge { shift->route(@_)->inline(1) }
 
 sub is_endpoint {
     my $self = shift;
-    return 0 if $self->inline;
-    return 0 if @{$self->children};
+    return   if $self->inline;
+    return 1 if $self->block;
+    return   if @{$self->children};
     return 1;
 }
 
 # Life can be hilariously cruel.
 sub match {
-    my ($self, $match) = @_;
+    my $self  = shift;
+    my $match = shift;
 
     # Shortcut
-    return undef unless $match;
+    return unless $match;
 
     # Match object
-    $match = MojoX::Routes::Match->new($match)
+    $match = MojoX::Routes::Match->new($match)->dictionary($self->dictionary)
       unless ref $match && $match->isa('MojoX::Routes::Match');
 
-    # Path
-    my $path      = $match->path;
-    my $substring = $self->_shape(\$path);
+    # Root
+    $match->root($self) unless $match->root;
 
-    # Debug
-    warn qq/"$substring" ("$path")\n/ if DEBUG;
+    # Conditions
+    for (my $i = 0; $i < @{$self->conditions}; $i += 2) {
+        my $name      = $self->conditions->[$i];
+        my $value     = $self->conditions->[$i + 1];
+        my $condition = $self->dictionary->{$name};
+
+        # No condition
+        return unless $condition;
+
+        # Match
+        my $captures =
+          $condition->($self, $match->tx, $match->captures, $value);
+
+        # Matched?
+        return unless $captures && ref $captures eq 'HASH';
+
+        # Merge captures
+        $match->captures($captures);
+    }
+
+    # Path
+    my $path = $match->path;
 
     # Match
-    my $captures = $self->pattern->match($substring) || return undef;
+    my $captures = $self->pattern->shape_match(\$path);
 
     $match->path($path);
+
+    return unless $captures;
 
     # Merge captures
     $captures = {%{$match->captures}, %$captures};
     $match->captures($captures);
 
+    # Format
+    if ($self->is_endpoint && !$self->pattern->format) {
+        if ($path =~ /^\.([^\/]+)$/) {
+            $match->captures->{format} = $1;
+            $match->path('');
+        }
+    }
+    $match->captures->{format} = $self->pattern->format
+      if $self->pattern->format;
+
     # Update stack
-    if ($self->inline || $self->is_endpoint) {
+    if ($self->inline || ($self->is_endpoint && $match->is_path_empty)) {
         push @{$match->stack}, $captures;
     }
 
     # Waypoint match
-    if ($self->block && (!$path || $path eq '/')) {
+    if ($self->block && $match->is_path_empty) {
         push @{$match->stack}, $captures;
         $match->endpoint($self);
         return $self;
@@ -91,12 +152,29 @@ sub match {
         $match->path($path);
 
         # Reset stack
-        $match->stack($snapshot);
+        if ($self->parent) { $match->stack($snapshot) }
+        else {
+            $match->captures({});
+            $match->stack([]);
+        }
     }
 
-    $match->endpoint($self) if $self->is_endpoint;
+    $match->endpoint($self) if $self->is_endpoint && $match->is_path_empty;
 
     return $match;
+}
+
+sub over {
+    my $self = shift;
+
+    # Shortcut
+    return $self unless @_;
+
+    # Conditions
+    my $conditions = ref $_[0] eq 'ARRAY' ? $_[0] : [@_];
+    $self->conditions($conditions);
+
+    return $self;
 }
 
 sub parse {
@@ -116,14 +194,13 @@ sub route {
 
     # We are the parent
     $route->parent($self);
+    weaken $route->{parent};
 
     # Add to tree
     push @{$self->children}, $route;
 
     return $route;
 }
-
-sub segments { return shift->pattern->segments }
 
 sub to {
     my $self = shift;
@@ -149,11 +226,17 @@ sub url_for {
     my ($self, $url, $values) = @_;
 
     # Path prefix
-    my $path = $url->path->to_string;
-    $path = $self->pattern->render($values) . $path;
+    my $path   = $url->path->to_string;
+    my $prefix = $self->pattern->render($values);
+    $path = $prefix . $path unless $prefix eq '/';
 
     # Make sure there is always a root
     $path = '/' if !$path && !$self->parent;
+
+    # Format
+    if ((my $format = $values->{format}) && !$self->parent) {
+        $path .= ".$format" unless $path =~ /\.[^\/]+$/;
+    }
 
     $url->path->parse($path);
 
@@ -162,22 +245,22 @@ sub url_for {
     return $url;
 }
 
-sub waypoint { return shift->route(@_)->block(1) }
+sub via {
+    my $self = shift;
 
-sub _shape {
-    my ($self, $pathref) = @_;
+    # Methods
+    my $methods = ref $_[0] ? $_[0] : [@_];
 
     # Shortcut
-    return '' unless $self->segments;
+    return $self unless @$methods;
 
-    my $substring = '';
-    for (1 .. $self->segments) {
-        $$pathref =~ s/^(\/?[^\/]*)//;
-        $substring .= $1;
-    }
+    # Condition
+    push @{$self->conditions}, method => [map { lc $_ } @$methods];
 
-    return $substring;
+    return $self;
 }
+
+sub waypoint { shift->route(@_)->block(1) }
 
 1;
 __END__
@@ -198,6 +281,8 @@ L<MojoX::Routes> is a routes implementation.
 
 =head2 ATTRIBUTES
 
+L<MojoX::Routes> implements the following attributes.
+
 =head2 C<block>
 
     my $block = $routes->block;
@@ -207,6 +292,16 @@ L<MojoX::Routes> is a routes implementation.
 
     my $children = $routes->children;
     $routes      = $routes->children([MojoX::Routes->new]);
+
+=head2 C<conditions>
+
+    my $conditions  = $routes->conditions;
+    $routes         = $routes->conditions([foo => qr/\w+/]);
+
+=head2 C<dictionary>
+
+    my $dictionary = $routes->dictionary;
+    $routes        = $routes->dictionary({foo => sub { ... }});
 
 =head2 C<inline>
 
@@ -228,10 +323,6 @@ L<MojoX::Routes> is a routes implementation.
     my $pattern = $routes->pattern;
     $routes     = $routes->pattern(MojoX::Routes::Pattern->new);
 
-=head2 C<segments>
-
-    my $segments = $routes->segments;
-
 =head1 METHODS
 
 L<MojoX::Routes> inherits all methods from L<Mojo::Base> and implements the
@@ -241,6 +332,10 @@ follwing the ones.
 
     my $routes = MojoX::Routes->new;
     my $routes = MojoX::Routes->new('/:controller/:action');
+
+=head2 C<add_condition>
+
+    $routes = $routes->add_condition(foo => sub { ... });
 
 =head2 C<bridge>
 
@@ -259,7 +354,14 @@ follwing the ones.
 
 =head2 C<match>
 
-    my $match = $routes->match($tx);
+    $match = $routes->match($match);
+    my $match = $routes->match('/foo/bar');
+    my $match = $routes->match(get => '/foo/bar');
+
+=head2 C<over>
+
+    $routes = $routes->over(foo => qr/\w+/);
+    $routes = $routes->over({foo => qr/\w+/});
 
 =head2 C<parse>
 
@@ -277,6 +379,12 @@ follwing the ones.
 
     my $url = $routes->url_for($url);
     my $url = $routes->url_for($url, {foo => 'bar'});
+
+=head2 C<via>
+
+    $routes = $routes->via('get');
+    $routes = $routes->via(qw/get post/);
+    $routes = $routes->via([qw/get post/]);
 
 =head2 C<waypoint>
 

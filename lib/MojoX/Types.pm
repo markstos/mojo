@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package MojoX::Types;
 
@@ -8,22 +8,27 @@ use warnings;
 use base 'Mojo::Base';
 
 __PACKAGE__->attr(
-    types => (
-        chained => 1,
-        default => sub {
-            return {
-                css   => 'text/css',
-                ico   => 'image/x-icon',
-                gif   => 'image/gif',
-                html  => 'text/html',
-                jpg   => 'image/jpeg',
-                js    => 'application/x-javascript',
-                phtml => 'text/html',
-                png   => 'image/png',
-                txt   => 'text/plain'
-            };
-        }
-    )
+    types => sub {
+        return {
+            atom => 'application/atom+xml',
+            css  => 'text/css',
+            gif  => 'image/gif',
+            gz   => 'application/gzip',
+            htm  => 'text/html',
+            html => 'text/html',
+            ico  => 'image/x-icon',
+            jpeg => 'image/jpeg',
+            jpg  => 'image/jpeg',
+            js   => 'application/x-javascript',
+            json => 'application/json',
+            png  => 'image/png',
+            rss  => 'application/rss+xml',
+            tar  => 'application/x-tar',
+            txt  => 'text/plain',
+            xml  => 'text/xml',
+            zip  => 'application/zip'
+        };
+    }
 );
 
 # Magic. Got it.
@@ -57,6 +62,8 @@ MojoX::Types - Types
 L<MojoX::Types> is a container for MIME types.
 
 =head2 ATTRIBUTES
+
+L<MojoX::Types> implements the following attributes.
 
 =head2 C<types>
 

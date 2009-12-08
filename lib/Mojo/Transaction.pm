@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package Mojo::Transaction;
 
@@ -7,80 +7,82 @@ use warnings;
 
 use base 'Mojo::Stateful';
 
-use Mojo::Message::Request;
-use Mojo::Message::Response;
+use Carp 'croak';
 
-__PACKAGE__->attr([qw/continued connection kept_alive/] => (chained => 1));
-__PACKAGE__->attr(
-    req => (
-        chained => 1,
-        default => sub { Mojo::Message::Request->new }
-    )
-);
-__PACKAGE__->attr(
-    res => (
-        chained => 1,
-        default => sub { Mojo::Message::Response->new }
-    )
-);
+__PACKAGE__->attr([qw/connection kept_alive/]);
+__PACKAGE__->attr([qw/local_address local_port remote_address remote_port/]);
+__PACKAGE__->attr(continue_timeout => 5);
+__PACKAGE__->attr(keep_alive       => 0);
 
-# What's a wedding?  Webster's dictionary describes it as the act of removing
-# weeds from one's garden.
-sub keep_alive {
-    my ($self, $keep_alive) = @_;
+__PACKAGE__->attr('_real_state');
 
-    $self->{keep_alive} = $keep_alive if $keep_alive;
-
-    my $req = $self->req;
-    my $res = $self->res;
-
-    # No keep alive for 0.9
-    $self->{keep_alive} ||= 0
-      if ($req->version eq '0.9') || ($res->version eq '0.9');
-
-    # No keep alive for 1.0
-    $self->{keep_alive} ||= 0
-      if ($req->version eq '1.0') || ($res->version eq '1.0');
-
-    # Keep alive?
-    $self->{keep_alive} = 1
-      if ($req->headers->connection || '') =~ /keep-alive/i
-      or ($res->headers->connection || '') =~ /keep-alive/i;
-
-    # Close?
-    $self->{keep_alive} = 0
-      if ($req->headers->connection || '') =~ /close/i
-      or ($res->headers->connection || '') =~ /close/i;
-
-    # Default
-    $self->{keep_alive} = 1 unless defined $self->{keep_alive};
-    return $self->{keep_alive};
+# Please don't eat me! I have a wife and kids. Eat them!
+sub client_connected {
+    croak 'Method "client_connected" not implemented by subclass';
 }
 
-sub new_delete { shift->_builder('DELETE', @_) }
-sub new_get    { shift->_builder('GET',    @_) }
-sub new_head   { shift->_builder('HEAD',   @_) }
-sub new_post   { shift->_builder('POST',   @_) }
-sub new_put    { shift->_builder('PUT',    @_) }
+sub client_get_chunk {
+    croak 'Method "client_get_chunk" not implemented by subclass';
+}
 
-sub _builder {
-    my $class = shift;
-    my $self  = $class->new;
-    my $req   = $self->req;
+sub client_info { croak 'Method "client_info" not implemented by subclass' }
 
-    # Method
-    $req->method(shift);
+sub client_is_writing { shift->_is_writing }
 
-    # URL
-    $req->url->parse(shift);
+sub client_leftovers {
+    croak 'Method "client_leftovers" not implemented by subclass';
+}
 
-    # Headers
-    my $headers = ref $_[0] eq 'HASH' ? $_[0] : {@_};
-    for my $name (keys %$headers) {
-        $req->headers->header($name, $headers->{$name});
-    }
+sub client_read { croak 'Method "client_read" not implemented by subclass' }
+sub client_spin { croak 'Method "client_spin" not implemented by subclass' }
+
+sub is_paused { shift->is_state('paused') }
+
+sub is_pipeline { return shift->isa('Mojo::Transaction::Pipeline') ? 1 : 0 }
+
+sub pause {
+    my $self = shift;
+
+    # Already paused
+    return $self if $self->_real_state;
+
+    # Save state
+    $self->_real_state($self->state);
+
+    # Pause
+    $self->state('paused');
 
     return $self;
+}
+
+sub resume {
+    my $self = shift;
+
+    # Not paused
+    return unless my $state = $self->_real_state;
+
+    # Resume
+    $self->_real_state(undef);
+    $self->state($state);
+
+    return $self;
+}
+
+sub server_get_chunk {
+    croak 'Method "server_get_chunk" not implemented by subclass';
+}
+
+sub server_is_writing { shift->_is_writing }
+
+sub server_leftovers {
+    croak 'Method "server_leftovers" not implemented by subclass';
+}
+
+sub server_read { croak 'Method "server_read" not implemented by subclass' }
+sub server_spin { croak 'Method "server_spin" not implemented by subclass' }
+
+sub _is_writing {
+    shift->is_state(qw/write write_start_line write_headers write_body/);
 }
 
 1;
@@ -88,22 +90,15 @@ __END__
 
 =head1 NAME
 
-Mojo::Transaction - HTTP Transaction Container
+Mojo::Transaction - HTTP Transaction Base Class
 
 =head1 SYNOPSIS
 
-    use Mojo::Transaction;
-
-    my $tx = Mojo::Transaction->new;
-
-    my $req = $tx->req;
-    my $res = $tx->res;
-
-    my $keep_alive = $tx->keep_alive;
+    use base 'Mojo::transaction';
 
 =head1 DESCRIPTION
 
-L<Mojo::Transaction> is a container for HTTP transactions.
+L<Mojo::Transaction> is a HTTP process base class.
 
 =head1 ATTRIBUTES
 
@@ -115,86 +110,108 @@ implements the following new ones.
     my $connection = $tx->connection;
     $tx            = $tx->connection($connection);
 
-=head2 C<continued>
+=head2 C<continue_timeout>
 
-    my $continued = $tx->continued;
-    $tx           = $tx->continued(1);
+    my $continue_timeout = $tx->continue_timeout;
+    $tx                  = $tx->continue_timeout(3);
 
 =head2 C<keep_alive>
 
     my $keep_alive = $tx->keep_alive;
-    my $keep_alive = $tx->keep_alive(1);
+    $tx            = $tx->keep_alive(1);
 
 =head2 C<kept_alive>
 
     my $kept_alive = $tx->kept_alive;
-    my $kept_alive = $tx->kept_alive(1);
+    $tx            = $tx->kept_alive(1);
 
-=head2 C<req>
+=head2 C<local_address>
 
-    my $req = $tx->req;
-    $tx     = $tx->req(Mojo::Message::Request->new);
+    my $local_address = $tx->local_address;
+    $tx               = $tx->local_address($address);
 
-Returns a L<Mojo::Message::Request> object if called without arguments.
-Returns the invocant if called with arguments.
+=head2 C<local_port>
 
-=head2 C<res>
+    my $local_port = $tx->local_port;
+    $tx            = $tx->local_port($port);
 
-    my $res = $tx->res;
-    $tx     = $tx->res(Mojo::Message::Response->new);
+=head2 C<remote_address>
 
-Returns a L<Mojo::Message::Response> object if called without arguments.
-Returns the invocant if called with arguments.
+    my $remote_address = $tx->remote_address;
+    $tx                = $tx->remote_address($address);
+
+=head2 C<remote_port>
+
+    my $remote_port = $tx->remote_port;
+    $tx             = $tx->remote_port($port);
 
 =head1 METHODS
 
 L<Mojo::Transaction> inherits all methods from L<Mojo::Stateful> and
 implements the following new ones.
 
-=head2 C<new_delete>
+=head2 C<client_connected>
 
-    my $tx = Mojo::Transaction->new_delete('http://127.0.0.1',
-        User-Agent => 'Mojo'
-    );
-    my $tx = Mojo::Transaction->new_delete('http://127.0.0.1', {
-        User-Agent => 'Mojo'
-    });
+    $tx = $tx->client_connected;
 
-=head2 C<new_get>
+=head2 C<client_get_chunk>
 
-    my $tx = Mojo::Transaction->new_get('http://127.0.0.1',
-        User-Agent => 'Mojo'
-    );
-    my $tx = Mojo::Transaction->new_get('http://127.0.0.1', {
-        User-Agent => 'Mojo'
-    });
+    my $chunk = $tx->client_get_chunk;
 
-=head2 C<new_head>
+=head2 C<client_info>
 
-    my $tx = Mojo::Transaction->new_head('http://127.0.0.1',
-        User-Agent => 'Mojo'
-    );
-    my $tx = Mojo::Transaction->new_head('http://127.0.0.1', {
-        User-Agent => 'Mojo'
-    });
+    my $info = $tx->client_info;
 
-=head2 C<new_post>
+=head2 C<client_is_writing>
 
-    my $tx = Mojo::Transaction->new_post('http://127.0.0.1',
-        User-Agent => 'Mojo'
-    );
-    my $tx = Mojo::Transaction->new_post('http://127.0.0.1', {
-        User-Agent => 'Mojo'
-    });
+    my $writing = $tx->client_is_writing;
 
-=head2 C<new_put>
+=head2 C<client_leftovers>
 
-    my $tx = Mojo::Transaction->new_put('http://127.0.0.1',
-        User-Agent => 'Mojo'
-    );
-    my $tx = Mojo::Transaction->new_put('http://127.0.0.1', {
-        User-Agent => 'Mojo'
-    });
+    my $leftovers = $tx->client_leftovers;
 
+=head2 C<client_read>
+
+    $tx = $tx->client_read($chunk);
+
+=head2 C<client_spin>
+
+    $tx = $tx->client_spin;
+
+=head2 C<is_paused>
+
+    my $paused = $tx->is_paused;
+
+=head2 C<is_pipeline>
+
+    my $is_pipeline = $tx->is_pipeline;
+
+=head2 C<pause>
+
+    $tx = $tx->pause;
+
+=head2 C<resume>
+
+    $tx = $tx->resume;
+
+=head2 C<server_get_chunk>
+
+    my $chunk = $tx->server_get_chunk;
+
+=head2 C<server_is_writing>
+
+    my $writing = $tx->server_is_writing;
+
+=head2 C<server_leftovers>
+
+    my $leftovers = $tx->server_leftovers;
+
+=head2 C<server_read>
+
+    $tx = $tx->server_read($chunk);
+
+=head2 C<server_spin>
+
+    $tx = $tx->server_spin;
 
 =cut

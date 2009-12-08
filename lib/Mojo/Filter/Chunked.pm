@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package Mojo::Filter::Chunked;
 
@@ -6,6 +6,7 @@ use strict;
 use warnings;
 
 use base 'Mojo::Filter';
+use bytes;
 
 # Here's to alcohol, the cause of—and solution to—all life's problems.
 sub build {
@@ -15,12 +16,12 @@ sub build {
     return '' if $self->is_done;
 
     # Shortcut
-    return undef unless defined $chunk;
+    return unless defined $chunk;
 
     my $chunk_length = length $chunk;
 
     # Trailing headers?
-    my $headers = 1 if ref $chunk && $chunk->isa('Mojo::Headers');
+    my $headers = ref $chunk && $chunk->isa('Mojo::Headers') ? 1 : 0;
 
     my $formatted = '';
 
@@ -32,7 +33,7 @@ sub build {
         $formatted = "\x0d\x0a0\x0d\x0a";
 
         # Trailing headers
-        $formatted .= "$chunk\x0d\x0a\x0d\x0a" if $headers;
+        $formatted .= $headers ? "$chunk\x0d\x0a\x0d\x0a" : "\x0d\x0a";
     }
 
     # Separator
@@ -59,25 +60,16 @@ sub parse {
     }
 
     # Got a chunk (we ignore the chunk extension)
-    my $filter = $self->input_buffer;
-    while ($filter->{buffer} =~ /^(([\da-fA-F]+).*\x0d?\x0a)/) {
+    my $filter  = $self->input_buffer;
+    my $content = $filter->to_string;
+    while ($content =~ /^((?:\x0d?\x0a)?([\da-fA-F]+).*\x0d?\x0a)/) {
+        my $header = $1;
         my $length = hex($2);
 
         # Last chunk
         if ($length == 0) {
-            $filter->{buffer} =~ s/^$1//;
-
-            # Trailing headers
-            if ($self->headers->trailer) {
-                $self->state('trailing_headers');
-            }
-
-            # Done
-            else {
-                $self->_remove_chunked_encoding;
-                $filter->empty;
-                $self->done;
-            }
+            $filter->remove(length $header);
+            $self->state('trailing_headers');
             last;
         }
 
@@ -85,12 +77,19 @@ sub parse {
         else {
 
             # We have a whole chunk
-            if (length $filter->{buffer} >= (length($1) + $length)) {
-                $filter->{buffer} =~ s/^$1//;
+            if (length $content >= (length($header) + $length)) {
+
+                # Remove header
+                $content =~ s/^$header//;
+                $filter->remove(length $header);
+
+                # Remove payload
+                substr $content, 0, $length, '';
                 $self->output_buffer->add_chunk($filter->remove($length));
 
                 # Remove newline at end of chunk
-                $filter->{buffer} =~ s/^\x0d?\x0a//;
+                $content =~ s/^(\x0d?\x0a)//;
+                $filter->remove(length $1) if $1;
             }
 
             # Not a whole chunk, need to wait for more data
@@ -116,7 +115,10 @@ sub _remove_chunked_encoding {
     my $self     = shift;
     my $encoding = $self->headers->transfer_encoding;
     $encoding =~ s/,?\s*chunked//ig;
-    $self->headers->transfer_encoding($encoding);
+    $encoding
+      ? $self->headers->transfer_encoding($encoding)
+      : $self->headers->remove('Transfer-Encoding');
+    $self->headers->content_length($self->output_buffer->raw_size);
 }
 
 1;

@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package MojoX::Renderer;
 
@@ -8,20 +8,40 @@ use warnings;
 use base 'Mojo::Base';
 
 use File::Spec;
+use Mojo::ByteStream 'b';
+use Mojo::JSON;
 use MojoX::Types;
 
-__PACKAGE__->attr(default_format => (chained => 1));
-__PACKAGE__->attr(handler => (chained => 1, default => sub { {} }));
-__PACKAGE__->attr(
-    types => (
-        chained => 1,
-        default => sub { MojoX::Types->new }
-    )
-);
-__PACKAGE__->attr(root => (chained => 1));
+__PACKAGE__->attr(default_format => 'html');
+__PACKAGE__->attr([qw/default_handler encoding/]);
+__PACKAGE__->attr(default_status => 200);
+__PACKAGE__->attr(handler        => sub { {} });
+__PACKAGE__->attr(layout_prefix  => 'layouts');
+__PACKAGE__->attr(root           => '/');
+__PACKAGE__->attr(types          => sub { MojoX::Types->new });
 
 # This is not how Xmas is supposed to be.
 # In my day Xmas was about bringing people together, not blowing them apart.
+sub new {
+    my $self = shift->SUPER::new(@_);
+
+    # JSON
+    $self->add_handler(
+        json => sub {
+            my ($r, $c, $output) = @_;
+            $$output = Mojo::JSON->new->encode(delete $c->stash->{json});
+        }
+    );
+
+    # Text
+    $self->add_handler(
+        text => sub {
+            my ($r, $c, $output) = @_;
+            $$output = delete $c->stash->{text};
+        }
+    );
+}
+
 sub add_handler {
     my $self = shift;
 
@@ -33,63 +53,149 @@ sub add_handler {
     return $self;
 }
 
+# Bodies are for hookers and fat people.
 sub render {
     my ($self, $c) = @_;
 
-    my $format        = $c->stash->{format};
-    my $template      = $c->stash->{template};
-    my $template_path = $c->stash->{template_path};
+    # We got called
+    $c->stash->{rendered} = 1;
+    $c->stash->{content} ||= {};
 
-    return undef unless $format || $template || $template_path;
+    # Partial?
+    my $partial = delete $c->stash->{partial};
 
-    # Default format
-    my $default = $self->default_format;
-
-    # Template but no path
-    if ($template && !$template_path) {
-
-        # Build template_path
-        $template .= ".$default"
-          if $default && $template !~ /\.\w+$/;
-        my $path = File::Spec->catfile($self->root, $template);
-        $c->stash->{template_path} = $path;
-    }
+    # Template
+    my $template = delete $c->stash->{template};
 
     # Format
-    unless ($format) {
-        $c->stash->{template_path} =~ /\.(\w+)$/;
-        $format = $1;
-    }
+    my $format = $c->stash->{format} || $self->default_format;
 
-    return undef unless $format;
+    # Handler
+    my $handler = $c->stash->{handler} || $self->default_handler;
 
-    my $handler = $self->handler->{$format};
-
-    # Debug
-    if ($handler) {
-        $c->app->log->debug(qq/Rendering with handler "$format"/);
-    }
-
-    # No format found
-    else {
-        $c->app->log->debug(qq/No handler for "$format" configured/);
-        return undef;
-    }
-
-    # Render
+    my $options =
+      {template => $template, format => $format, handler => $handler};
     my $output;
-    return undef unless $handler->($self, $c, \$output);
+
+    # Text
+    if ($c->stash->{text}) {
+
+        # Render
+        $self->handler->{text}->($self, $c, \$output);
+
+        # Extends?
+        $c->stash->{content}->{content} = b("$output")
+          if ($c->stash->{extends} || $c->stash->{layout}) && !$partial;
+    }
+
+    # JSON
+    elsif ($c->stash->{json}) {
+
+        # Render
+        $self->handler->{json}->($self, $c, \$output);
+        $format = 'json';
+
+        # Extends?
+        $c->stash->{content}->{content} = b("$output")
+          if ($c->stash->{extends} || $c->stash->{layout}) && !$partial;
+    }
+
+    # Template or templateless handler
+    elsif ($template || $handler) {
+
+        # Render
+        return unless $self->_render_template($c, \$output, $options);
+
+        # Extends?
+        $c->stash->{content}->{content} = b("$output")
+          if ($c->stash->{extends} || $c->stash->{layout}) && !$partial;
+    }
+
+    # Extends
+    while (!$partial && (my $extends = $self->_extends($c))) {
+
+        # Handler
+        $handler = $c->stash->{handler} || $self->default_handler;
+        $options->{handler} = $handler;
+
+        # Format
+        $format = $c->stash->{format} || $self->default_format;
+        $options->{format} = $format;
+
+        # Template
+        $options->{template} = $extends;
+
+        # Render
+        $self->_render_template($c, \$output, $options);
+    }
 
     # Partial
-    return $output if $c->stash->{partial};
+    return $output if $partial;
+
+    # Encoding
+    $output = b($output)->encode($self->encoding)->to_string
+      if $self->encoding;
 
     # Response
     my $res = $c->res;
-    $res->code(200) unless $c->res->code;
-    $res->body($output);
+    $res->code($c->stash('status') || $self->default_status)
+      unless $res->code;
+    $res->body($output) unless $res->body;
 
+    # Type
     my $type = $self->types->type($format) || 'text/plain';
-    $res->headers->content_type($type);
+    $res->headers->content_type($type) unless $res->headers->content_type;
+
+    # Success!
+    return 1;
+}
+
+sub template_name {
+    my ($self, $options) = @_;
+
+    # Template?
+    return unless my $template = $options->{template} || '';
+    return unless my $format   = $options->{format};
+    return unless my $handler  = $options->{handler};
+
+    return "$template.$format.$handler";
+}
+
+sub template_path {
+    my $self = shift;
+    return File::Spec->catfile($self->root, split '/',
+        $self->template_name(shift));
+}
+
+sub _extends {
+    my ($self, $c) = @_;
+
+    # Layout
+    $c->stash->{extends}
+      ||= ($self->layout_prefix . '/' . delete $c->stash->{layout})
+      if $c->stash->{layout};
+
+    # Extends
+    return delete $c->stash->{extends};
+}
+
+# Well, at least here you'll be treated with dignity.
+# Now strip naked and get on the probulator.
+sub _render_template {
+    my ($self, $c, $output, $options) = @_;
+
+    # Renderer
+    my $handler  = $options->{handler};
+    my $renderer = $self->handler->{$handler};
+
+    # No handler
+    unless ($renderer) {
+        $c->app->log->error(qq/No handler for "$handler" available./);
+        return;
+    }
+
+    # Render
+    return unless $renderer->($self, $c, $output, $options);
 
     # Success!
     return 1;
@@ -114,49 +220,60 @@ L<MojoX::Renderer> is a MIME type based renderer.
 
 =head2 ATTRIBUTES
 
+L<MojoX::Types> implements the follwing attributes.
+
 =head2 C<default_format>
 
-    my $format = $renderer->default_format;
-    $renderer  = $renderer->default_format('phtml');
+    my $default = $renderer->default_format;
+    $renderer   = $renderer->default_format('html');
 
-Returns the file extesion of the default handler unsed for rendering if
-called without arguments.
-Returns the invocant if called with arguments.
+=head2 C<default_handler>
+
+    my $default = $renderer->default_handler;
+    $renderer   = $renderer->default_handler('epl');
+
+=head2 C<default_status>
+
+    my $default = $renderer->default_status;
+    $renderer   = $renderer->default_status(404);
+
+=head2 C<encoding>
+
+    my $encoding = $renderer->encoding;
+    $renderer    = $renderer->encoding('koi8-r');
 
 =head2 C<handler>
 
     my $handler = $renderer->handler;
-    $renderer   = $renderer->handler({phtml => sub { ... }});
+    $renderer   = $renderer->handler({epl => sub { ... }});
 
-Returns a hashref of handlers if called without arguments.
-Returns the invocant if called with arguments.
-Keys are file extensions and values are coderefs.
+=head2 C<layout_prefix>
 
-=head2 C<types>
-
-    my $types = $renderer->types;
-    $renderer = $renderer->types(MojoX::Types->new);
-
-Returns a L<MojoX::Types> object if called without arguments.
-Returns the invocant if called with arguments.
+    my $prefix = $renderer->layout_prefix;
+    $renderer  = $renderer->layout_prefix('layouts');
 
 =head2 C<root>
 
    my $root  = $renderer->root;
    $renderer = $renderer->root('/foo/bar/templates');
 
-Return the root file system path where templates are stored if called without
-arguments.
-Returns the invocant if called with arguments.
+=head2 C<types>
+
+    my $types = $renderer->types;
+    $renderer = $renderer->types(MojoX::Types->new);
 
 =head1 METHODS
 
 L<MojoX::Types> inherits all methods from L<Mojo::Base> and implements the
 follwing the ones.
 
+=head2 C<new>
+
+    my $renderer = MojoX::Renderer->new;
+
 =head2 C<add_handler>
 
-    $renderer = $renderer->add_handler(phtml => sub { ... });
+    $renderer = $renderer->add_handler(epl => sub { ... });
 
 =head2 C<render>
 
@@ -165,43 +282,20 @@ follwing the ones.
     $c->stash->{partial} = 1;
     my $output = $renderer->render($c);
 
-Returns a true value  if a template is successfully rendered.
-Returns the template output if C<partial> is set in the stash.
-Returns C<undef> if none of C<format>, C<template> or C<template_path> are
-set in the stash.
-Returns C<undef> if the C<template> is defined, but lacks an extension
-and no default handler has been defined.
-Returns C<undef> if the handler returns a false value.
-Expects a L<MojoX::Context> object.
+=head2 C<template_name>
 
-To determine the format to use, we first check C<format> in the stash, and
-if that is empty, we check the extensions of C<template_path> and
-C<template>.
+    my $template = $renderer->template_path({
+        template => 'foo/bar',
+        format   => 'html',
+        handler  => 'epl'
+    });
 
-C<format> may contain a value like C<html>.
-C<template_path> may contain an absolute path like  C</templates/page.html>.
-C<template> may contain a path relative to C<root>, like C<users/list.html>.
+=head2 C<template_path>
 
-If C<template_path> is not set in the stash, we create it by appending
-C<template> to the C<root>.
-
-If C<template> lacks an extension, we add one using C<default_format>.
-
-If C<format> is not defined, we try to determine it from the extension of
-C<template_path>.
-
-If no handler is found for the C<format>, we emit a warning, and check for a
-handler for the C<default_format>.
-
-A handler receives three arguments: the renderer object, the
-L<MojoX::Context> object and a reference to an empty scalar, where the output
-can be accumulated.
-
-If C<partial> is defined in the stash, the output from the handler is simply
-returned.
-
-Otherwise, we build our own L<Mojo::Message::Response> and return C<true> for
-success. We set the response code to 200 if none is provided, and default to
-C<text/plain> if there is no type associated with the format.
+    my $path = $renderer->template_name({
+        template => 'foo/bar',
+        format   => 'html',
+        handler  => 'epl'
+    });
 
 =cut

@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package Mojo::Server::FastCGI;
 
@@ -8,7 +8,12 @@ use warnings;
 use base 'Mojo::Server';
 use bytes;
 
-use IO::Select;
+use IO::Poll 'POLLIN';
+use IO::Socket;
+
+use constant DEBUG => $ENV{MOJO_SERVER_DEBUG} || 0;
+
+__PACKAGE__->attr('_listen');
 
 # Roles
 my @ROLES = qw/RESPONDER  AUTHORIZER FILTER/;
@@ -51,53 +56,81 @@ sub accept_connection {
     my $self = shift;
 
     # Listen socket?
-    open $self->{_listen}, '<&=0' unless $self->{_listen};
+    unless ($self->_listen) {
+        my $listen = IO::Socket->new;
 
-    # Accept
-    my $connection = undef;
-    unless (accept $connection, $self->{_listen}) {
-        $self->{error} = "Can't accept connection: $!";
+        # Open
+        unless ($listen->fdopen(0, 'r')) {
+            $self->app->log->error("Can't open FastCGI socket fd0: $!");
+            return;
+        }
+
+        $self->_listen($listen);
     }
 
+    # Debug
+    $self->app->log->debug('FastCGI listen socket opened.') if DEBUG;
+
+    # Accept
+    my $c;
+    unless ($c = $self->_listen->accept) {
+        $self->app->log->error("Can't accept FastCGI connection: $!");
+        return;
+    }
+
+    # Debug
+    $self->app->log->debug('Accepted FastCGI connection.') if DEBUG;
+
     # Blocking sucks
-    $connection->blocking(0);
-    return $connection;
+    $c->blocking(0);
+    return $c;
 }
 
 sub read_record {
-    my ($self, $connection) = @_;
-    return undef unless $connection;
+    my ($self, $c) = @_;
+    return unless $c;
 
     # Header
-    my $header = $self->_read_chunk($connection, 8);
-    return undef unless $header;
+    my $header = $self->_read_chunk($c, 8);
+    return unless $header;
     my ($version, $type, $id, $clen, $plen) = unpack 'CCnnC', $header;
 
     # Body
-    my $body = $self->_read_chunk($connection, $clen + $plen);
+    my $body = $self->_read_chunk($c, $clen + $plen);
 
     # No content, just paddign bytes
     $body = undef unless $clen;
 
     # Ignore padding bytes
-    $body = $plen ? substr($body, $clen, 0, '') : $body;
+    $body = $plen ? substr($body, 0, $clen, '') : $body;
+
+    # Debug
+    if (DEBUG) {
+        my $t = $self->type_name($type);
+        $self->app->log->debug(
+            qq/Reading FastCGI record: $type - $id - "$body"./);
+    }
 
     return $self->type_name($type), $id, $body;
 }
 
 sub read_request {
-    my ($self, $connection) = @_;
+    my ($self, $c) = @_;
+
+    # Debug
+    $self->app->log->debug('Reading FastCGI request.') if DEBUG;
 
     # Transaction
     my $tx = $self->build_tx_cb->($self);
-    $tx->connection($connection);
+    $tx->connection($c);
     my $req = $tx->req;
 
     # Type
-    my ($type, $id, $body) = $self->read_record($connection);
+    my ($type, $id, $body) = $self->read_record($c);
     unless ($type && $type eq 'BEGIN_REQUEST') {
-        $self->{error} = "First record wasn't a begin request";
-        return undef;
+        $self->app->log->error(
+            "First FastCGI record wasn't a begin request.");
+        return;
     }
     $ENV{FCGI_ID} = $tx->{fcgi_id} = $id;
 
@@ -107,7 +140,8 @@ sub read_request {
 
     # Slurp
     my $parambuffer = '';
-    while (($type, $id, $body) = $self->read_record($connection)) {
+    my $env         = {};
+    while (($type, $id, $body) = $self->read_record($c)) {
 
         # Wrong id
         next unless $id == $tx->{fcgi_id};
@@ -132,12 +166,27 @@ sub read_request {
                 my $name  = substr $parambuffer, 0, $nlen, '';
                 my $value = substr $parambuffer, 0, $vlen, '';
 
-                $tx->req->parse({$name => $value});
+                # Environment
+                $env->{$name} = $value;
+
+                # Debug
+                $self->app->log->debug(qq/FastCGI param: $name - "$value"./)
+                  if DEBUG;
+
+                # Store connection information
+                $tx->remote_address($value) if $name =~ /REMOTE_ADDR/i;
+                $tx->local_port($value)     if $name =~ /SERVER_PORT/i;
             }
         }
 
         # Stdin
         elsif ($type eq 'STDIN') {
+
+            # Environment
+            if (keys %$env) {
+                $req->parse($env);
+                $env = {};
+            }
 
             # EOF?
             last unless $body;
@@ -152,13 +201,13 @@ sub read_request {
 
 sub role_name {
     my ($self, $role) = @_;
-    return undef unless $role;
+    return unless $role;
     return $ROLES[$role - 1];
 }
 
 sub role_number {
     my ($self, $role) = @_;
-    return undef unless $role;
+    return unless $role;
     return $ROLE_NUMBERS{uc $role};
 }
 
@@ -168,11 +217,17 @@ sub run {
     # Preload application
     $self->app;
 
-    while (my $connection = $self->accept_connection) {
-        my $tx = $self->read_request($connection);
+    while (my $c = $self->accept_connection) {
+        my $tx = $self->read_request($c);
 
         # Error
-        next unless $tx;
+        unless ($tx) {
+            $self->app->log->error("No transaction for FastCGI request.");
+            next;
+        }
+
+        # Debug
+        $self->app->log->debug('Handling FastCGI request.') if DEBUG;
 
         # Handle
         $self->handler_cb->($self, $tx);
@@ -183,28 +238,28 @@ sub run {
 
 sub type_name {
     my ($self, $type) = @_;
-    return undef unless $type;
+    return unless $type;
     return $TYPES[$type - 1];
 }
 
 sub type_number {
     my ($self, $type) = @_;
-    return undef unless $type;
+    return unless $type;
     return $TYPE_NUMBERS{uc $type};
 }
 
 sub write_records {
-    my ($self, $connection, $type, $id, $body) = @_;
+    my ($self, $c, $type, $id, $body) = @_;
 
     # Required
-    return undef unless defined $connection && defined $type && defined $id;
+    return unless defined $c && defined $type && defined $id;
 
     # Defaults
     $body ||= '';
     my $length = length $body;
 
     # Write records
-    my $empty = 1 unless $body;
+    my $empty = $body ? 0 : 1;
     my $offset = 0;
     while (($length > 0) || $empty) {
 
@@ -214,13 +269,22 @@ sub write_records {
 
         # FCGI version 1 record
         my $template = "CCnnCxa${len}x$padlen";
+
+        # Debug
+        if (DEBUG) {
+            my $chunk = substr($body, $offset, $len);
+            $self->app->log->debug(
+                qq/Writing FastCGI record: $type - $id - "$chunk"./);
+        }
+
         my $record = pack $template, 1, $self->type_number($type), $id, $len,
           $padlen,
           substr($body, $offset, $len);
 
         my $woffset = 0;
         while ($woffset < length $record) {
-            my $written = $connection->syswrite($record, undef, $woffset);
+            my $written = $c->syswrite($record, undef, $woffset);
+            return unless defined $written;
             $woffset += $written;
         }
 
@@ -229,12 +293,18 @@ sub write_records {
 
         last if $empty;
     }
+
+    return 1;
 }
 
 sub write_response {
     my ($self, $tx) = @_;
-    my $connection = $tx->connection;
-    my $res        = $tx->res;
+
+    # Debug
+    $self->app->log->debug('Writing FastCGI response.') if DEBUG;
+
+    my $c   = $tx->connection;
+    my $res = $tx->res;
 
     # Status
     my $code = $res->code;
@@ -257,7 +327,8 @@ sub write_response {
 
         # Headers
         $offset += length $chunk;
-        $self->write_records($connection, 'STDOUT', $tx->{fcgi_id}, $chunk);
+        return
+          unless $self->write_records($c, 'STDOUT', $tx->{fcgi_id}, $chunk);
     }
 
     # Body
@@ -276,12 +347,15 @@ sub write_response {
 
         # Content
         $offset += length $chunk;
-        $self->write_records($connection, 'STDOUT', $tx->{fcgi_id}, $chunk);
+        return
+          unless $self->write_records($c, 'STDOUT', $tx->{fcgi_id}, $chunk);
     }
 
     # The end
-    $self->write_records($connection, 'STDOUT', $tx->{fcgi_id}, undef);
-    $self->write_records($connection, 'END_REQUEST', $tx->{fcgi_id},
+    return
+      unless $self->write_records($c, 'STDOUT', $tx->{fcgi_id}, undef);
+    return
+      unless $self->write_records($c, 'END_REQUEST', $tx->{fcgi_id},
         pack('CCCCCCCC', 0));
 }
 
@@ -302,17 +376,21 @@ sub _nv_length {
 }
 
 sub _read_chunk {
-    my ($self, $connection, $length) = @_;
+    my ($self, $c, $length) = @_;
 
     # Read
     my $chunk = '';
     while (length $chunk < $length) {
 
         # We don't wait forever
-        return undef unless IO::Select->new($connection)->can_read(1);
+        my $poll = IO::Poll->new;
+        $poll->mask($c, POLLIN);
+        $poll->poll(1);
+        my @readers = $poll->handles(POLLIN);
+        return unless @readers;
 
         # Slurp
-        $connection->sysread(my $buffer, $length - length $chunk, 0);
+        $c->sysread(my $buffer, $length - length $chunk, 0);
         $chunk .= $buffer;
     }
 
@@ -347,15 +425,15 @@ implements the following new ones.
 
 =head2 C<accept_connection>
 
-    my $connection = $fcgi->accept_connection;
+    my $c = $fcgi->accept_connection;
 
 =head2 C<read_record>
 
-    my ($type, $id, $body) = $fcgi->read_record($connection);
+    my ($type, $id, $body) = $fcgi->read_record($c);
 
 =head2 C<read_request>
 
-    my $tx = $fcgi->read_request($connection);
+    my $tx = $fcgi->read_request($c);
 
 =head2 C<role_name>
 
@@ -379,7 +457,7 @@ implements the following new ones.
 
 =head2 C<write_records>
 
-    $fcgi->write_record($connection, 'STDOUT', $id, 'HTTP/1.1 200 OK');
+    $fcgi->write_record($c, 'STDOUT', $id, 'HTTP/1.1 200 OK');
 
 =head2 C<write_response>
 

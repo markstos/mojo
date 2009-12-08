@@ -1,4 +1,4 @@
-# Copyright (C) 2008, Sebastian Riedel.
+# Copyright (C) 2008-2009, Sebastian Riedel.
 
 package Mojo::Cookie::Response;
 
@@ -7,55 +7,74 @@ use warnings;
 
 use base 'Mojo::Cookie';
 
-use Mojo::ByteStream;
+use Mojo::ByteStream 'b';
+use Mojo::Date;
+
+__PACKAGE__->attr([qw/comment domain httponly max_age port secure/]);
+
+# Regex
+my $FIELD_RE = qr/
+    (
+      Comment
+    | Domain
+    | expires
+    | HttpOnly   # IE6 FF3 Opera 9.5
+    | Max-Age
+    | Path
+    | Port
+    | Secure
+    | Version
+    )
+/xmsi;
+my $FLAG_RE = qr/(?:Secure|HttpOnly)/i;
+
+sub expires {
+    my ($self, $expires) = @_;
+
+    # Set
+    $self->{expires} = $expires if defined $expires;
+
+    # Shortcut
+    return unless defined $self->{expires};
+
+    # Upgrade
+    $self->{expires} = Mojo::Date->new($self->{expires})
+      unless ref $self->{expires};
+
+    return $self->{expires};
+}
 
 # Remember the time he ate my goldfish?
 # And you lied and said I never had goldfish.
 # Then why did I have the bowl Bart? Why did I have the bowl?
 sub parse {
     my ($self, $string) = @_;
-
     my @cookies;
+
     for my $knot ($self->_tokenize($string)) {
-
-        my $first = 1;
-        for my $token (@{$knot}) {
-
-            my $name  = $token->[0];
-            my $value = $token->[1];
+        for my $i (0 .. $#{$knot}) {
+            my ($name, $value) = @{$knot->[$i]};
 
             # Value might be quoted
-            $value = Mojo::ByteStream->new($value)->unquote->to_string
-              if $value;
+            $value = b($value)->unquote->to_string if $value;
 
-            # Name and value
-            if ($first) {
+            # This will only run once
+            if (not $i) {
                 push @cookies, Mojo::Cookie::Response->new;
                 $cookies[-1]->name($name);
                 $cookies[-1]->value($value);
-                $first = 0;
+                next;
             }
 
-            # Version
-            elsif ($name =~ /^Version$/i) { $cookies[-1]->version($value) }
+            # Field
+            if (my @match = $name =~ /$FIELD_RE/) {
 
-            # Path
-            elsif ($name =~ /^Path$/i) { $cookies[-1]->path($value) }
+                # Underscore
+                (my $id = lc $match[0]) =~ tr/-/_/;
 
-            # Domain
-            elsif ($name =~ /^Domain$/i) { $cookies[-1]->domain($value) }
-
-            # Max-Age
-            elsif ($name =~ /^Max-Age$/i) { $cookies[-1]->max_age($value) }
-
-            # expires
-            elsif ($name =~ /^expires$/i) { $cookies[-1]->expires($value) }
-
-            # Secure
-            elsif ($name =~ /^Secure$/i) { $cookies[-1]->secure($value) }
-
-            # Comment
-            elsif ($name =~ /^Comment$/i) { $cookies[-1]->comment($value) }
+                # Flag?
+                $cookies[-1]->$id($id =~ /$FLAG_RE/ ? 1 : $value);
+            }
         }
     }
 
@@ -67,12 +86,8 @@ sub to_string {
 
     return '' unless $self->name;
 
-    my $name  = $self->name;
-    my $value = $self->value;
-    my $cookie .= "$name=$value";
-
-    $cookie .= '; Version=';
-    $cookie .= $self->version || 1;
+    my $cookie = sprintf "%s=%s; Version=%d",
+      $self->name, $self->value, ($self->version || 1);
 
     if (my $domain = $self->domain) { $cookie .= "; Domain=$domain" }
     if (my $path   = $self->path)   { $cookie .= "; Path=$path" }
@@ -82,8 +97,10 @@ sub to_string {
     if (defined(my $expires = $self->expires)) {
         $cookie .= "; expires=$expires";
     }
-    if (my $secure  = $self->secure)  { $cookie .= "; Secure=$secure" }
-    if (my $comment = $self->comment) { $cookie .= "; Comment=$comment" }
+    if (my $port     = $self->port)     { $cookie .= qq/; Port="$port"/ }
+    if (my $secure   = $self->secure)   { $cookie .= "; Secure" }
+    if (my $httponly = $self->httponly) { $cookie .= "; HttpOnly" }
+    if (my $comment  = $self->comment)  { $cookie .= "; Comment=$comment" }
 
     return $cookie;
 }
@@ -111,7 +128,43 @@ L<Mojo::Cookie::Response> is a generic container for HTTP response cookies.
 
 =head1 ATTRIBUTES
 
-L<Mojo::Cookie::Response> inherits all attributes from L<Mojo::Cookie>.
+L<Mojo::Cookie::Response> inherits all attributes from L<Mojo::Cookie> and
+implements the followign new ones.
+
+=head2 C<comment>
+
+    my $comment = $cookie->comment;
+    $cookie     = $cookie->comment('test 123');
+
+=head2 C<domain>
+
+    my $domain = $cookie->domain;
+    $cookie    = $cookie->domain('localhost');
+
+=head2 C<expires>
+
+    my $expires = $cookie->expires;
+    $cookie     = $cookie->expires(time + 60);
+
+=head2 C<httponly>
+
+    my $httponly = $cookie->httponly;
+    $cookie      = $cookie->httponly(1);
+
+=head2 C<max_age>
+
+    my $max_age = $cookie->max_age;
+    $cookie     = $cookie->max_age(60);
+
+=head2 C<port>
+
+    my $port = $cookie->port;
+    $cookie  = $cookie->port('80 8080');
+
+=head2 C<secure>
+
+    my $secure = $cookie->secure;
+    $cookie    = $cookie->secure(1);
 
 =head1 METHODS
 
