@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package Mojo::Base;
 
@@ -114,7 +114,6 @@ Mojo::Base - Minimal Base Class For Mojo Projects
     __PACKAGE__->attr([qw/passengers seats/] => sub { 2 });
 
     package main;
-    use Car;
 
     my $bmw = Car->new;
     print $bmw->doors;

@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package Mojo::Commands;
 
@@ -121,6 +121,10 @@ sub run {
 sub start {
     my $self = shift;
 
+    # Don't run commands if we are reloading
+    return $self if $ENV{MOJO_COMMANDS_DONE};
+    $ENV{MOJO_COMMANDS_DONE} ||= 1;
+
     # Arguments
     my @args = @_ ? @_ : @ARGV;
 
@@ -155,12 +159,12 @@ implements the following new ones.
 =head2 C<message>
 
     my $message  = $commands->message;
-    my $commands = $commands->message('Hello World!');
+    $commands    = $commands->message('Hello World!');
 
 =head2 C<namespaces>
 
     my $namespaces = $commands->namespaces;
-    my $commands   = $commands->namespaces(['Mojo::Command']);
+    $commands      = $commands->namespaces(['Mojo::Command']);
 
 =head1 METHODS
 

@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package Mojolicious::Command::Generate::LiteApp;
 
@@ -39,7 +39,7 @@ get '/' => 'index';
 
 get '/:groovy' => sub {
     my $self = shift;
-    $self->render_text($self->stash('groovy'));
+    $self->render_text($self->param('groovy'));
 };
 
 shagadelic;

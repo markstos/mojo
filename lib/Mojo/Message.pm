@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package Mojo::Message;
 
@@ -12,14 +12,16 @@ use bytes;
 use Carp 'croak';
 use Mojo::Asset::Memory;
 use Mojo::Buffer;
+use Mojo::ByteStream 'b';
 use Mojo::Content::Single;
 use Mojo::Parameters;
 use Mojo::Upload;
 
-use constant CHUNK_SIZE => $ENV{MOJO_CHUNK_SIZE} || 4096;
+use constant CHUNK_SIZE => $ENV{MOJO_CHUNK_SIZE} || 8192;
 
 __PACKAGE__->attr(buffer  => sub { Mojo::Buffer->new });
 __PACKAGE__->attr(content => sub { Mojo::Content::Single->new });
+__PACKAGE__->attr(default_charset                   => 'UTF-8');
 __PACKAGE__->attr([qw/major_version minor_version/] => 1);
 
 __PACKAGE__->attr([qw/_body_params _cookies _uploads/]);
@@ -86,6 +88,7 @@ sub body_params {
     my $type = $self->headers->content_type || '';
 
     # Charset
+    $params->charset($self->default_charset);
     $type =~ /charset=\"?(\S+)\"?/;
     $params->charset($1) if $1;
 
@@ -106,8 +109,27 @@ sub body_params {
             my $filename = $data->[1];
             my $part     = $data->[2];
 
-            # Form field
-            $params->append($name, $part->asset->slurp) unless $filename;
+            # File
+            next if $filename;
+
+            # Charset
+            my $charset;
+            if (my $type = $part->headers->content_type) {
+                $type =~ /charset=\"?(\S+)\"?/;
+                $charset = $1 if $1;
+            }
+
+            # Value
+            my $value = $part->asset->slurp;
+
+            # Try to decode
+            if ($charset) {
+                my $backup = $value;
+                $value = b($value)->decode($charset)->to_string;
+                $value = $backup unless defined $value;
+            }
+
+            $params->append($name, $value);
         }
     }
 
@@ -499,6 +521,11 @@ implements the following new ones.
 
     my $content = $message->content;
     $message    = $message->content(Mojo::Content::Single->new);
+
+=head2 C<default_charset>
+
+    my $charset = $message->default_charset;
+    $message    = $message->default_charset('UTF-8');
 
 =head2 C<headers>
 

@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package MojoX::Dispatcher::Routes::Controller;
 
@@ -8,6 +8,11 @@ use warnings;
 use base 'Mojo::Base';
 
 __PACKAGE__->attr([qw/app match tx/]);
+
+sub param {
+    my $self = shift;
+    return $self->stash->{params} ? $self->stash->{params}->param(@_) : undef;
+}
 
 # Just make a simple cake. And this time, if someone's going to jump out of
 # it make sure to put them in *after* you cook it.
@@ -75,6 +80,11 @@ L<MojoX::Dispatcher::Routes::Controller> implements the following attributes.
 
 L<MojoX::Dispatcher::Routes::Controller> inherits all methods from
 L<Mojo::Base> and implements the following new ones.
+
+=head2 C<param>
+
+    my $param  = $c->param('foo');
+    my @params = $c->param('foo');
 
 =head2 C<render>
 

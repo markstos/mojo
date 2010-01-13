@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package Mojolicious::Lite;
 
@@ -10,9 +10,8 @@ use base 'Mojolicious';
 use File::Spec;
 use FindBin;
 
-# Singletons
-my $APP;
-my $ROUTES;
+# Make reloading work
+BEGIN { $INC{$0} = $0 }
 
 # It's the future, my parents, my co-workers, my girlfriend,
 # I'll never see any of them ever again... YAHOOO!
@@ -27,10 +26,10 @@ sub import {
     $ENV{MOJO_HOME} ||= File::Spec->catdir(split '/', $FindBin::Bin);
 
     # Initialize app
-    $APP = $class->new;
+    my $app = $class->new;
 
     # Initialize routes
-    $ROUTES = $APP->routes;
+    my $routes = $app->routes;
 
     # Route generator
     my $route = sub {
@@ -80,41 +79,38 @@ sub import {
         $name ||= '';
 
         # Create bridge
-        return $ROUTES =
-          $APP->routes->bridge($pattern, {@$constraints})->over($conditions)
+        return $routes =
+          $app->routes->bridge($pattern, {@$constraints})->over($conditions)
           ->to($defaults)->name($name)
           if !ref $methods && $methods eq 'ladder';
 
         # Create route
-        $ROUTES->route($pattern, {@$constraints})->over($conditions)
+        $routes->route($pattern, {@$constraints})->over($conditions)
           ->via($methods)->to($defaults)->name($name);
     };
 
     # Prepare exports
     my $caller = caller;
     no strict 'refs';
+    no warnings 'redefine';
+
+    # Default template class
+    $app->renderer->default_template_class($caller);
 
     # Export
-    *{"${caller}::app"}    = sub {$APP};
+    *{"${caller}::app"}    = sub {$app};
     *{"${caller}::any"}    = sub { $route->(ref $_[0] ? shift : [], @_) };
     *{"${caller}::get"}    = sub { $route->('get', @_) };
     *{"${caller}::ladder"} = sub { $route->('ladder', @_) };
+    *{"${caller}::plugin"} = sub { $app->plugin(@_) };
     *{"${caller}::post"}   = sub { $route->('post', @_) };
 
+    # We are most likely the app in a lite environment
+    $ENV{MOJO_APP} = $app;
+
     # Shagadelic!
-    *{"${caller}::shagadelic"} = sub {
-
-        # We are the app in a lite environment
-        $ENV{MOJO_APP} ||= 'Mojolicious::Lite';
-
-        # Start
-        Mojolicious::Lite->start(@_);
-    };
+    *{"${caller}::shagadelic"} = sub { Mojolicious::Lite->start(@_) };
 }
-
-# Steven Hawking, aren't you that guy who invented gravity?
-# Sure, why not.
-sub new { $APP || shift->SUPER::new(@_) }
 
 1;
 __END__
@@ -180,6 +176,12 @@ The shagadelic call that starts the L<Mojolicious> command system can be
 customized to override normal C<@ARGV> use.
 
     shagadelic('cgi');
+
+Your application will automatically reload itself if you set the C<--reload>
+option, so you don't have to restart the server after every change.
+
+    % ./myapp.pl daemon --reload
+    Server available at http://127.0.0.1:3000.
 
 Routes are basically just fancy paths that can contain different kinds of
 placeholders.
@@ -269,7 +271,8 @@ Templates can also extend each other.
     </html>
 
 Route placeholders allow capturing parts of a request path until a C</> or
-C<.> separator occurs, results will be stored by name in the C<stash>.
+C<.> separator occurs, results will be stored by name in the C<stash> and
+C<param>.
 
     # /foo/*
     get '/foo/:bar' => sub {
@@ -281,7 +284,7 @@ C<.> separator occurs, results will be stored by name in the C<stash>.
     # /*something/foo
     get '/(:bar)something/foo' => sub {
         my $self = shift;
-        my $bar  = $self->stash('bar');
+        my $bar  = $self->param('bar');
         $self->render_text("Our :bar placeholder matched $bar");
     };
 
@@ -336,7 +339,7 @@ this process can be easily customized.
     # /*
     any '/:bar' => [bar => qr/\d+/] => sub {
         my $self = shift;
-        my $bar  = $self->stash('bar');
+        my $bar  = $self->param('bar');
         $self->render_text("Our :bar placeholder matched $bar");
     };
 
@@ -542,8 +545,7 @@ can be easily mixed to make the transition process very smooth.
     get '/bar' => sub { shift->render_text('This too!') };
 
     app->routes->namespace('MyApp');
-    app->routes->route('/foo/:action')->via('get')
-      ->to(controller => 'foo', action => index);
+    app->routes->route('/foo/:action')->via('get')->to('foo#index');
 
     shagadelic;
 
@@ -553,11 +555,6 @@ L<Mojolicious::Lite> inherits all attributes from L<Mojolicious>.
 
 =head1 METHODS
 
-L<Mojolicious::Lite> inherits all methods from L<Mojolicious> and implements
-the following new ones.
-
-=head2 C<new>
-
-    my $mojo = Mojolicious::Lite->new;
+L<Mojolicious::Lite> inherits all methods from L<Mojolicious>.
 
 =cut

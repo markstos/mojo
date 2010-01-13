@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package Mojo;
 
@@ -28,7 +28,7 @@ __PACKAGE__->attr(home   => sub { Mojo::Home->new });
 __PACKAGE__->attr(log    => sub { Mojo::Log->new });
 
 # Oh, so they have internet on computers now!
-our $VERSION = '0.999914';
+our $VERSION = '0.999915';
 
 sub new {
     my $self = shift->SUPER::new(@_);
@@ -241,6 +241,10 @@ Mark Stosberg
 
 Maksym Komar
 
+Maxim Vuets
+
+Mirko Westermeier
+
 Pascal Gaudette
 
 Pedro Melo
@@ -267,7 +271,7 @@ Yuki Kimoto
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (C) 2008-2009, Sebastian Riedel.
+Copyright (C) 2008-2010, Sebastian Riedel.
 
 This program is free software, you can redistribute it and/or modify it under
 the terms of the Artistic License version 2.0.

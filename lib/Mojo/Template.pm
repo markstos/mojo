@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package Mojo::Template;
 
@@ -13,7 +13,7 @@ use IO::File;
 use Mojo::ByteStream;
 use Mojo::Template::Exception;
 
-use constant CHUNK_SIZE => $ENV{MOJO_CHUNK_SIZE} || 4096;
+use constant CHUNK_SIZE => $ENV{MOJO_CHUNK_SIZE} || 8192;
 
 __PACKAGE__->attr([qw/auto_escape compiled namespace/]);
 __PACKAGE__->attr([qw/append code prepend/] => '');
@@ -270,7 +270,7 @@ sub parse {
         }
 
         # Perl line without return value
-        if ($line =~ /^$line_start(.+)?$/) {
+        if ($line =~ /^$line_start([^\>]{1}.*)?$/) {
             push @{$self->tree}, [@capture, 'code', $1];
             $multiline_expression = 0;
             next;
@@ -541,16 +541,12 @@ Like preprocessing a config file, generating text from heredocs and stuff
 like that.
 
     <% Inline Perl %>
-    <%= Perl expression, replaced with result or XML escaped result
-        (depending on auto_escape attribute) %>
-    <%== Perl expression, replaced with result or XML escaped result
-         (depending on auto_escape attribute) %>
+    <%= Perl expression, replaced with result %>
+    <%== Perl expression, replaced with XML escaped result %>
     <%# Comment, useful for debugging %>
     % Perl line
-    %= Perl expression line, replaced with result or XML escaped result
-       (depending on auto_escape attribute)
-    %== Perl expression line,    replaced with result or XML escaped result
-        (depending on auto_escape attribute)
+    %= Perl expression line, replaced with result
+    %== Perl expression line, replaced with XML escaped result
     %# Comment line, useful for debugging
 
 Whitespace characters around tags can be trimmed with a special tag ending.

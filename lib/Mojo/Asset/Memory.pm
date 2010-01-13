@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package Mojo::Asset::Memory;
 
@@ -11,7 +11,7 @@ use bytes;
 use Carp 'croak';
 use IO::File;
 
-use constant CHUNK_SIZE => $ENV{MOJO_CHUNK_SIZE} || 4096;
+use constant CHUNK_SIZE => $ENV{MOJO_CHUNK_SIZE} || 8192;
 
 # There's your giraffe, little girl.
 # I'm a boy.

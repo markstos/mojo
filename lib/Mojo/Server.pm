@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package Mojo::Server;
 
@@ -10,11 +10,12 @@ use base 'Mojo::Base';
 use Carp 'croak';
 use Mojo::Loader;
 
-use constant RELOAD => $ENV{MOJO_RELOAD} || 0;
-
 __PACKAGE__->attr(
     app => sub {
         my $self = shift;
+
+        # App in environment
+        return $ENV{MOJO_APP} if ref $ENV{MOJO_APP};
 
         # Load
         if (my $e = Mojo::Loader->load($self->app_class)) {
@@ -24,14 +25,15 @@ __PACKAGE__->attr(
         return $self->app_class->new;
     }
 );
-__PACKAGE__->attr(app_class => sub { $ENV{MOJO_APP} ||= 'Mojo::HelloWorld' });
+__PACKAGE__->attr(app_class =>
+      sub { ref $ENV{MOJO_APP} || $ENV{MOJO_APP} || 'Mojo::HelloWorld' });
 __PACKAGE__->attr(
     build_tx_cb => sub {
         sub {
             my $self = shift;
 
             # Reload
-            if (RELOAD) {
+            if ($self->reload) {
                 if (my $e = Mojo::Loader->reload) { warn $e }
                 delete $self->{app};
             }
@@ -62,6 +64,7 @@ __PACKAGE__->attr(
         sub { shift->app->handler(shift) }
     }
 );
+__PACKAGE__->attr(reload => sub { $ENV{MOJO_RELOAD} || 0 });
 
 # Are you saying you're never going to eat any animal again? What about bacon?
 # No.
@@ -132,6 +135,11 @@ L<Mojo::Server> implements the following attributes.
     $server     = $server->handler_cb(sub {
         my ($self, $tx) = @_;
     });
+
+=head2 C<reload>
+
+    my $reload = $server->reload;
+    $server    = $server->reload(1);
 
 =head1 METHODS
 

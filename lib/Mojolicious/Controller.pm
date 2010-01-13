@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package Mojolicious::Controller;
 
@@ -14,7 +14,18 @@ use Mojo::URL;
 # but then you get to the end and a gorilla starts throwing barrels at you.
 sub client { shift->app->client }
 
-sub param { shift->tx->req->param(@_) }
+sub helper {
+    my $self = shift;
+
+    # Name
+    return unless my $name = shift;
+
+    # Helper
+    return unless my $helper = $self->app->renderer->helper->{$name};
+
+    # Run
+    return $self->$helper(@_);
+}
 
 sub pause { shift->tx->pause }
 
@@ -82,6 +93,20 @@ sub render {
     return $self->app->renderer->render($self);
 }
 
+sub render_exception {
+    my ($self, $e) = @_;
+
+    # Render exception template
+    my $options = {
+        template  => 'exception',
+        format    => 'html',
+        status    => 500,
+        exception => $e
+    };
+    $self->app->static->serve_500($self)
+      if $self->stash->{exception} || !$self->render($options);
+}
+
 sub render_inner {
     my ($self, $name, $content) = @_;
 
@@ -101,6 +126,20 @@ sub render_json {
     my $self = shift;
     $self->stash->{json} = shift;
     return $self->render(@_);
+}
+
+sub render_not_found {
+    my $self = shift;
+
+    # Render not found template
+    my $options = {
+        template  => 'not_found',
+        format    => 'html',
+        status    => 404,
+        not_found => 1
+    };
+    $self->app->static->serve_404($self)
+      if $self->stash->{not_found} || !$self->render($options);
 }
 
 sub render_partial {
@@ -167,10 +206,10 @@ ones.
 
     my $client = $c->client;
 
-=head2 C<param>
+=head2 C<helper>
 
-    my $param  = $c->param('foo');
-    my @params = $c->param('foo');
+    $c->helper('foo');
+    $c->helper(foo => 23);
 
 =head2 C<pause>
 
@@ -197,6 +236,10 @@ ones.
     $c->render('foo/bar', format => 'html');
     $c->render('foo/bar', {format => 'html'});
 
+=head2 C<render_exception>
+
+    $c->render_exception($e);
+
 =head2 C<render_inner>
 
     my $output = $c->render_inner;
@@ -207,6 +250,10 @@ ones.
 
     $c->render_json({foo => 'bar'});
     $c->render_json([1, 2, -3]);
+
+=head2 C<render_not_found>
+
+    $c->render_not_found;
 
 =head2 C<render_partial>
 

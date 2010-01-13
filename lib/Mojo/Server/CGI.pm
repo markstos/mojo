@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package Mojo::Server::CGI;
 
@@ -10,7 +10,7 @@ use bytes;
 
 use IO::Poll 'POLLIN';
 
-use constant CHUNK_SIZE => $ENV{MOJO_CHUNK_SIZE} || 4096;
+use constant CHUNK_SIZE => $ENV{MOJO_CHUNK_SIZE} || 8192;
 
 __PACKAGE__->attr(nph => 0);
 
@@ -71,7 +71,7 @@ sub run {
     # Status
     if (my $code = $res->code) {
         my $message = $res->message || $res->default_message;
-        $res->headers->header('Status', "$code $message") unless $self->nph;
+        $res->headers->header(Status => "$code $message") unless $self->nph;
     }
 
     # Response headers

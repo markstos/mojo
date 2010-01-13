@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package Mojo::Asset::File;
 
@@ -16,9 +16,10 @@ use File::Spec;
 use IO::File;
 use Mojo::ByteStream 'b';
 
-use constant CHUNK_SIZE => $ENV{MOJO_CHUNK_SIZE} || 4096;
+use constant CHUNK_SIZE => $ENV{MOJO_CHUNK_SIZE} || 8192;
 
-__PACKAGE__->attr([qw/cleanup path/]);
+__PACKAGE__->attr([qw/cleanup path end_range/]);
+__PACKAGE__->attr(start_range => 0);
 __PACKAGE__->attr(tmpdir => sub { $ENV{MOJO_TMPDIR} || File::Spec->tmpdir });
 __PACKAGE__->attr(
     handle => sub {
@@ -30,7 +31,7 @@ __PACKAGE__->attr(
         if ($file) {
 
             # New file
-            my $mode = '+>';
+            my $mode = '+>>';
 
             # File exists
             $mode = '<' if -s $file;
@@ -80,20 +81,34 @@ sub add_chunk {
     return $self;
 }
 
+# Your guilty consciences may make you vote Democratic, but secretly you all
+# yearn for a Republican president to lower taxes, brutalize criminals, and
+# rule you like a king!
 sub contains {
     my ($self, $bytestream) = @_;
     my ($buffer, $window);
 
     # Seek to start
-    $self->handle->seek(0, SEEK_SET);
+    $self->handle->seek($self->start_range, SEEK_SET);
+    my $end = $self->end_range ? $self->end_range : $self->size;
+    my $rlen = length($bytestream) * 2;
+    if ($rlen > $end - $self->start_range) {
+        $rlen = $end - $self->start_range;
+    }
 
     # Read
-    my $read = $self->handle->sysread($window, length($bytestream) * 2);
-    my $offset = $read;
+    my $read    = $self->handle->sysread($window, $rlen);
+    my $offset  = $read;
+    my $readlen = length($bytestream);
 
     # Moving window search
-    while ($offset <= $self->size) {
-        $read = $self->handle->sysread($buffer, length($bytestream));
+    my $range = $self->end_range;
+    while ($offset <= $end) {
+        if ($range) {
+            $readlen = $end + 1 - $offset;
+            return if $readlen <= 0;
+        }
+        $read = $self->handle->sysread($buffer, $readlen);
         $offset += $read;
         $window .= $buffer;
         my $pos = index $window, $bytestream;
@@ -109,10 +124,20 @@ sub get_chunk {
     my ($self, $offset) = @_;
 
     # Seek to start
-    $self->handle->seek($offset, SEEK_SET);
+    my $off = $offset + $self->start_range;
+    $self->handle->seek($off, SEEK_SET);
+    my $end = $self->end_range;
+    my $buffer;
 
-    # Read
-    $self->handle->sysread(my $buffer, CHUNK_SIZE);
+    # Range support
+    if ($end) {
+        my $chunk = $end + 1 - $off;
+        return '' if $chunk <= 0;
+        $chunk = CHUNK_SIZE if $chunk > CHUNK_SIZE;
+        $self->handle->sysread($buffer, $chunk);
+    }
+    else { $self->handle->sysread($buffer, CHUNK_SIZE) }
+
     return $buffer;
 }
 
@@ -193,6 +218,11 @@ L<Mojo::Asset::File> implements the following attributes.
     my $cleanup = $asset->cleanup;
     $asset      = $asset->cleanup(1);
 
+=head2 C<end_range>
+
+    my $end = $asset->end_range;
+    $asset  = $asset->end_range(8);
+
 =head2 C<handle>
 
     my $handle = $asset->handle;
@@ -202,6 +232,11 @@ L<Mojo::Asset::File> implements the following attributes.
 
     my $path = $asset->path;
     $asset   = $asset->path('/foo/bar/baz.txt');
+
+=head2 C<start_range>
+
+    my $start = $asset->start_range;
+    $asset    = $asset->start_range(0);
 
 =head2 C<tmpdir>
 

@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package Mojolicious;
 
@@ -8,27 +8,36 @@ use warnings;
 use base 'Mojo';
 
 use Mojolicious::Commands;
-use Mojolicious::Dispatcher;
-use Mojolicious::Renderer;
+use Mojolicious::Plugins;
+use MojoX::Dispatcher::Routes;
 use MojoX::Dispatcher::Static;
+use MojoX::Renderer;
 use MojoX::Types;
-use Time::HiRes ();
 
 __PACKAGE__->attr(controller_class => 'Mojolicious::Controller');
 __PACKAGE__->attr(mode => sub { ($ENV{MOJO_MODE} || 'development') });
-__PACKAGE__->attr(renderer => sub { Mojolicious::Renderer->new });
-__PACKAGE__->attr(routes   => sub { Mojolicious::Dispatcher->new });
+__PACKAGE__->attr(plugins  => sub { Mojolicious::Plugins->new });
+__PACKAGE__->attr(renderer => sub { MojoX::Renderer->new });
+__PACKAGE__->attr(routes   => sub { MojoX::Dispatcher::Routes->new });
 __PACKAGE__->attr(static   => sub { MojoX::Dispatcher::Static->new });
 __PACKAGE__->attr(types    => sub { MojoX::Types->new });
 
-# It's just like the story of the grasshopper and the octopus.
-# All year long, the grasshopper kept burying acorns for the winter,
-# while the octopus mooched off his girlfriend and watched TV.
-# But then the winter came, and the grasshopper died,
-# and the octopus ate all his acorns.
-# And also he got a racecar. Is any of this getting through to you?
 sub new {
     my $self = shift->SUPER::new(@_);
+
+    # Transaction builder
+    $self->build_tx_cb(
+        sub {
+
+            # Build
+            my $tx = Mojo::Transaction::Single->new;
+
+            # Hook
+            $self->plugins->run_hook_reverse(after_build_tx => $tx);
+
+            return $tx;
+        }
+    );
 
     # Namespace
     $self->routes->namespace(ref $self);
@@ -41,10 +50,11 @@ sub new {
     $self->renderer->root($self->home->rel_dir('templates'));
     $self->static->root($self->home->rel_dir('public'));
 
-    # Hide our methods
-    $self->routes->hide(qw/client param pause redirect_to render_json/);
-    $self->routes->hide(qw/render_inner render_partial render_text resume/);
-    $self->routes->hide('url_for');
+    # Hide own controller methods
+    $self->routes->hide(qw/client helper param pause redirect_to/);
+    $self->routes->hide(qw/render_exception render_json render_inner/);
+    $self->routes->hide(qw/render_not_found render_partial render_text/);
+    $self->routes->hide(qw/resume url_for/);
 
     # Mode
     my $mode = $self->mode;
@@ -53,14 +63,23 @@ sub new {
     $self->log->path($self->home->rel_file("log/$mode.log"))
       if -w $self->home->rel_file('log');
 
+    # Plugins
+    $self->plugin('agent_condition');
+    $self->plugin('default_helpers');
+    $self->plugin('epl_renderer');
+    $self->plugin('ep_renderer');
+    $self->plugin('request_timer');
+    $self->plugin('powered_by');
+
     # Run mode
     $mode = $mode . '_mode';
-    eval { $self->$mode } if $self->can($mode);
-    $self->log->error(qq/Mode "$mode" failed: $@/) if $@;
+    $self->$mode(@_) if $self->can($mode);
+
+    # Reduced log output outside of development mode
+    $self->log->level('error') unless $mode eq 'development';
 
     # Startup
-    eval { $self->startup(@_) };
-    $self->log->error("Startup failed: $@") if $@;
+    $self->startup(@_);
 
     return $self;
 }
@@ -68,6 +87,9 @@ sub new {
 # The default dispatchers with exception handling
 sub dispatch {
     my ($self, $c) = @_;
+
+    # Hook
+    $self->plugins->run_hook(before_dispatch => $c);
 
     # New request
     my $path = $c->req->url->path;
@@ -77,35 +99,25 @@ sub dispatch {
     # Try to find a static file
     my $e = $self->static->dispatch($c);
 
+    # Hook
+    $self->plugins->run_hook_reverse(after_static_dispatch => $c);
+
     # Use routes if we don't have a response yet
     $e = $self->routes->dispatch($c) if $e;
 
     # Exception
-    if (ref $e) {
-        $c->render(
-            template  => 'exception',
-            format    => 'html',
-            status    => 500,
-            exception => $e
-        ) or $self->static->serve_500($c);
-    }
+    if (ref $e) { $c->render_exception($e) }
 
     # Nothing found
-    elsif ($e) {
-        $c->render(
-            template => 'not_found',
-            format   => 'html',
-            status   => 404
-        ) or $self->static->serve_404($c);
-    }
+    elsif ($e) { $c->render_not_found }
+
+    # Hook
+    $self->plugins->run_hook_reverse(after_dispatch => $c);
 }
 
 # Bite my shiny metal ass!
 sub handler {
     my ($self, $tx) = @_;
-
-    # Start timer
-    my $start = [Time::HiRes::gettimeofday()];
 
     # Load controller class
     my $class = $self->controller_class;
@@ -120,12 +132,11 @@ sub handler {
     # Build default controller and process
     eval { $self->process($class->new(app => $self, tx => $tx)) };
     $self->log->error("Processing request failed: $@") if $@;
+}
 
-    # End timer
-    my $elapsed = sprintf '%f',
-      Time::HiRes::tv_interval($start, [Time::HiRes::gettimeofday()]);
-    my $rps = $elapsed == 0 ? '??' : sprintf '%.3f', 1 / $elapsed;
-    $self->log->debug("Request took $elapsed seconds ($rps/s).");
+sub plugin {
+    my $self = shift;
+    $self->plugins->load_plugin($self, @_);
 }
 
 # This will run for each request
@@ -162,10 +173,11 @@ Mojolicious - Web Framework
     sub startup {
         my $self = shift;
 
+        # Routes
         my $r = $self->routes;
 
-        $r->route('/:controller/:action')
-          ->to(controller => 'foo', action => 'bar');
+        # Default route
+        $r->route('/:controller/:action/:id')->to('foo#bar', id => 1);
     }
 
 =head1 DESCRIPTION
@@ -185,15 +197,20 @@ following new ones.
     my $mode = $mojo->mode;
     $mojo    = $mojo->mode('production');
 
+=head2 C<plugins>
+
+    my $plugins = $mojo->plugins;
+    $mojo       = $mojo->plugins(Mojolicious::Plugins->new);
+
 =head2 C<renderer>
 
     my $renderer = $mojo->renderer;
-    $mojo        = $mojo->renderer(Mojolicious::Renderer->new);
+    $mojo        = $mojo->renderer(MojoX::Renderer->new);
 
 =head2 C<routes>
 
     my $routes = $mojo->routes;
-    $mojo      = $mojo->routes(Mojolicious::Dispatcher->new);
+    $mojo      = $mojo->routes(MojoX::Dispatcher::Routes->new);
 
 =head2 C<static>
 
@@ -221,6 +238,12 @@ new ones.
 =head2 C<handler>
 
     $tx = $mojo->handler($tx);
+
+=head2 C<plugin>
+
+    $mojo->plugin('something');
+    $mojo->plugin('something', foo => 23);
+    $mojo->plugin('something', {foo => 23});
 
 =head2 C<process>
 

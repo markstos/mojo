@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package Mojo::Command::Get;
 
@@ -7,6 +7,7 @@ use warnings;
 
 use base 'Mojo::Command';
 
+use Mojo::ByteStream 'b';
 use Mojo::Client;
 use Mojo::Transaction::Single;
 
@@ -34,13 +35,14 @@ sub run {
     # URL
     my $url = shift;
     die $self->usage unless $url;
+    $url = b($url)->decode('UTF-8')->to_string;
 
     # Client
     my $client = Mojo::Client->new;
 
     # Application
     $client->app($ENV{MOJO_APP} || 'Mojo::HelloWorld')
-      unless $url =~ /^http:\/\//;
+      unless $url =~ /^\w+:\/\//;
 
     # Transaction
     my $tx = Mojo::Transaction::Single->new;
@@ -57,6 +59,10 @@ sub run {
 
     # Request
     $client->process($tx);
+
+    # Error
+    my $error = $tx->error;
+    print "Error: $error\n" if $error;
 
     return $self;
 }

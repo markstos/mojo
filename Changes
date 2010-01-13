@@ -1,6 +1,57 @@
 This file documents the revision history for Perl extension Mojo.
 
+0.999915 2010-01-10 00:00:00
+        - MOJO_RELOAD=1 now works with Mojolicious::Lite, have fun!
+        - Added --reload flag to all server bindings as an alternative to
+          MOJO_RELOAD=1.
+        - Added IPv6 support.
+        - Added SSL/TLS support.
+        - Added IDNA support.
+        - Added UNIX domain socket support to daemons.
+        - Added transparent kqueue and epoll support to daemons and client.
+        - Added support for listening to multiple locations to the daemons.
+              mojo daemon --listen http:127.0.0.1:3000
+              mojo daemon --listen http:127.0.0.1:3000,file:/tmp/my.sock
+              mojo daemon --listen http:*:3000,http:*:3001,http:*:3002
+              mojo daemon --listen http:[::1]:3000
+              mojo daemon --listen https:*:3001:/foo/server.crt:/foo/server.key
+        - Added routes captures to params in Mojolicious.
+        - Added native PSGI support.
+        - Added the ability to have multiple Mojolicious::Lite apps at once.
+          (Mojolicious::Lite is not a singleton anymore!)
+        - Added charset plugin to Mojolicious. (charsbar)
+        - Added simple reverse proxy support with tests.
+        - Added simpler way to define default controller and action for a
+          route.
+              $r->route('/foo')->to('mycontroller#myaction');
+        - Added multipart post support to Test::Mojo. (yuki-kimoto)
+        - Added env attribute to Mojo::Message::Request.
+        - Added range support to MojoX::Dispatcher::Static. (xantus)
+        - Added version command.
+        - Added after_build_tx plugin hook.
+        - Added timer support to Mojo::IOLoop.
+        - Added the ability to run multiple parallel ioloops that block each
+          other.
+        - Added default_template_class attribute to MojoX::Renderer.
+        - Made all Mojolicious after_* plugin hooks run in reverse order.
+        - Made param decoding more defensive and allow malformed data to pass
+          through for debugging.
+        - Reduced Mojolicious log output outside of development mode.
+        - Fixed prefork daemon signal handling.
+        - Fixed backslash encoding bug in Mojo::JSON.
+        - Fixed memory leaks in Mojolicious plugins. (sharifulin)
+        - Fixed makefile and app generators.
+        - Fixed a case where an ending tag would be interpreted as a line
+          start in Mojo::Template.
+        - Fixed multipart charset handling and added the ability to disable
+          param decoding.
+        - Fixed format detection bug. (marcus)
+        - Fixed named url_for and added tests. (marcus)
+        - Fixed decamelize of multiple uppercase characters.
+
 0.999914 2009-11-24 00:00:00
+        - Added the Mojolicious plugin system.
+        - Added helper method to Mojolicious::Controller.
         - Added encoding support to post_form_ok in Test::Mojo.
         - Made cookies easier to set.
         - Fixed body_contains in Mojo::Content::Single. (yuki-kimoto)

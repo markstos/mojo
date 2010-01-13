@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package MojoliciousTest;
 
@@ -43,9 +43,14 @@ sub startup {
       ->to(controller => 'foo', action => 'config', config => {test => 123});
 
     # /test4 - named route for url_for
-    $r->route('/test4/:something')
-      ->to(controller => 'foo', action => 'something', something => 23)
-      ->name('soemthing');
+    $r->route('/test4/:something')->to('foo#something', something => 23)
+      ->name('something');
+
+    # /somethingtest - refer to another route with url_for
+    $r->route('/somethingtest')->to('foo#something');
+
+    # /something_missing - refer to a non existing route with url_for
+    $r->route('/something_missing')->to('foo#url_for_missing');
 
     # /test3 - no class, just a namespace
     $r->route('/test3')

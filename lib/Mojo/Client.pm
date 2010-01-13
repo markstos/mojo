@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package Mojo::Client;
 
@@ -16,10 +16,10 @@ use Mojo::Transaction::Single;
 use Scalar::Util qw/isweak weaken/;
 use Socket;
 
-__PACKAGE__->attr([qw/app default_cb/]);
+__PACKAGE__->attr([qw/app default_cb tls_ca_file tls_verify_cb/]);
 __PACKAGE__->attr([qw/continue_timeout max_keep_alive_connections/] => 5);
 __PACKAGE__->attr(cookie_jar => sub { Mojo::CookieJar->new });
-__PACKAGE__->attr(ioloop     => sub { Mojo::IOLoop->new });
+__PACKAGE__->attr(ioloop     => sub { Mojo::IOLoop->singleton });
 __PACKAGE__->attr(keep_alive_timeout => 15);
 __PACKAGE__->attr(max_redirects      => 0);
 
@@ -257,7 +257,7 @@ sub _build_tx {
     # Headers
     my $headers = ref $_[0] eq 'HASH' ? $_[0] : {@_};
     for my $name (keys %$headers) {
-        $req->headers->header($name, $headers->{$name});
+        $req->headers->header($name => $headers->{$name});
     }
 
     # Queue transaction with callback
@@ -349,19 +349,36 @@ sub _error {
 }
 
 sub _fetch_cookies {
-    my ($self, $tx) = @_;
+    my ($self, $p) = @_;
 
     # Shortcut
     return unless $self->cookie_jar;
 
     # Pipeline
-    if ($tx->is_pipeline) {
-        $_->req->cookies($self->cookie_jar->find($_->req->url))
-          for @{$tx->active};
+    if ($p->is_pipeline) {
+
+        # Find cookies for all transactions
+        for my $tx (@{$p->active}) {
+
+            # URL
+            my $url = $tx->req->url->clone;
+            if (my $host = $tx->req->headers->host) { $url->host($host) }
+
+            # Find
+            $tx->req->cookies($self->cookie_jar->find($url));
+        }
     }
 
     # Single
-    else { $tx->req->cookies($self->cookie_jar->find($tx->req->url)) }
+    else {
+
+        # URL
+        my $url = $p->req->url->clone;
+        if (my $host = $p->req->headers->host) { $url->host($host) }
+
+        # Find
+        $p->req->cookies($self->cookie_jar->find($p->req->url));
+    }
 }
 
 sub _finish {
@@ -501,17 +518,14 @@ sub _queue {
     # New connection
     else {
 
-        # Address
-        my $address =
-            $host =~ /\b(?:\d{1,3}\.){3}\d{1,3}\b/
-          ? $host
-          : inet_ntoa(inet_aton($host));
-
         # Connect
         $id = $self->ioloop->connect(
-            address => $address,
-            port    => $port,
-            cb      => $connected
+            cb   => $connected,
+            host => $host,
+            port => $port,
+            tls  => $scheme eq 'https' ? 1 : 0,
+            tls_ca_file => $self->tls_ca_file || $ENV{MOJO_CA_FILE},
+            tls_verify_cb => $self->tls_verify_cb
         );
 
         # Error
@@ -714,6 +728,16 @@ L<Mojo::Client> implements the following attributes.
 
     my $max_redirects = $client->max_redirects;
     $client           = $client->max_redirects(3);
+
+=head2 C<tls_ca_file>
+
+    my $tls_ca_file = $client->tls_ca_file;
+    $client         = $client->tls_ca_file('/etc/tls/cacerts.pem');
+
+=head2 C<tls_verify_cb>
+
+    my $tls_verify_cb = $client->tls_verify_cb;
+    $client           = $client->tls_verify_cb(sub {...});
 
 =head1 METHODS
 

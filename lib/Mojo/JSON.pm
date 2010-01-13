@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package Mojo::JSON;
 
@@ -63,14 +63,14 @@ my $VALUE_SEPARATOR_RE = qr/^$WHITESPACE_RE\,/;
 
 # Escaped special character map
 my $ESCAPE = {
-    '\"' => "\x22",
-    '\\' => "\x5c",
-    '\/' => "\x2f",
-    '\b' => "\x8",
-    '\f' => "\xC",
-    '\n' => "\xA",
-    '\r' => "\xD",
-    '\t' => "\x9"
+    '\"'   => "\x22",
+    '\\\\' => "\x5c",
+    '\/'   => "\x2f",
+    '\b'   => "\x8",
+    '\f'   => "\xC",
+    '\n'   => "\xA",
+    '\r'   => "\xD",
+    '\t'   => "\x9"
 };
 my $REVERSE_ESCAPE = {};
 for my $key (keys %$ESCAPE) { $REVERSE_ESCAPE->{$ESCAPE->{$key}} = $key }
@@ -260,6 +260,9 @@ sub _decode_string {
 
 sub _decode_structure {
     my ($self, $ref) = @_;
+
+    # Shortcut
+    return unless $$ref;
 
     # Object
     if ($$ref =~ s/$OBJECT_BEGIN_RE//) {

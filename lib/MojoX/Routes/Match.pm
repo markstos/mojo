@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package MojoX::Routes::Match;
 
@@ -7,6 +7,7 @@ use warnings;
 
 use base 'Mojo::Base';
 
+use Carp 'croak';
 use Mojo::URL;
 
 __PACKAGE__->attr([qw/captures dictionary/] => sub { {} });
@@ -73,17 +74,21 @@ sub url_for {
     if ($name) {
 
         # Find endpoint
+        my $found    = 0;
         my @children = ($self->root);
         while (my $child = shift @children) {
 
+            # Match
             if (($child->name || '') eq $name) {
                 $endpoint = $child;
+                $found++;
                 last;
             }
 
             # Append
             push @children, @{$child->children};
         }
+        croak qq/Route "$name" used in url_for does not exist/ unless $found;
     }
 
     # Merge values

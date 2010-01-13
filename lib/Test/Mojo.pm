@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package Test::Mojo;
 
@@ -9,11 +9,14 @@ use base 'Mojo::Base';
 
 use Mojo::ByteStream 'b';
 use Mojo::Client;
+use Mojo::Content::MultiPart;
+use Mojo::Content::Single;
 use Mojo::JSON;
+use Mojo::Parameters;
 
 require Test::More;
 
-__PACKAGE__->attr(app       => sub { Mojolicious::Lite->new });
+__PACKAGE__->attr(app => sub { return $ENV{MOJO_APP} if ref $ENV{MOJO_APP} });
 __PACKAGE__->attr(redirects => sub { [] });
 __PACKAGE__->attr('tx');
 __PACKAGE__->attr(max_redirects => 0);
@@ -181,13 +184,23 @@ sub post_form_ok {
     my $tx = Mojo::Transaction::Single->new;
     $tx->req->method('POST');
     $tx->req->url->parse($url);
-    $tx->req->headers->content_type('application/x-www-form-urlencoded');
-    $tx->req->body($params->to_string);
+
+    # Multipart
+    my $type = $headers->{'Content-Type'} || '';
+    if ($type eq 'multipart/form-data') {
+        $self->_build_multipart_post($tx, $params, $encoding);
+    }
+
+    # Urlencoded
+    else {
+        $tx->req->headers->content_type('application/x-www-form-urlencoded');
+        $tx->req->body($params->to_string);
+    }
 
     # Headers
     $headers ||= {};
     for my $name (keys %$headers) {
-        $tx->req->headers->header($name, $headers->{$name});
+        $tx->req->headers->header($name => $headers->{$name});
     }
 
     # Request
@@ -230,6 +243,46 @@ sub status_is {
     Test::More::is($tx->res->code, $status, $desc);
 
     return $self;
+}
+
+sub _build_multipart_post {
+    my ($self, $tx, $params, $encoding) = @_;
+
+    # Formdata
+    my $form = $params->to_hash;
+
+    # Parts
+    my @parts;
+    foreach my $name (sort keys %$form) {
+
+        # Part
+        my $part = Mojo::Content::Single->new;
+
+        # Content-Disposition
+        $part->headers->content_disposition(qq/form-data; name="$name"/);
+
+        # Content-Type
+        my $type = 'text/plain';
+        $type .= qq/;charset=$encoding/ if $encoding;
+        $part->headers->content_type($type);
+
+        # Value
+        my $value =
+          ref $form->{$name} eq 'ARRAY'
+          ? join ',', @{$form->{$name}}
+          : $form->{$name};
+        $part->asset->add_chunk($value);
+
+        push @parts, $part;
+    }
+
+    # Multipart content
+    my $content = Mojo::Content::MultiPart->new;
+    $content->headers->content_type('multipart/form-data');
+    $content->parts(\@parts);
+
+    # Add content to transaction
+    $tx->req->content($content);
 }
 
 sub _get_content {

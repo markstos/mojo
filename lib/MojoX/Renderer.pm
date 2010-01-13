@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package MojoX::Renderer;
 
@@ -9,13 +9,15 @@ use base 'Mojo::Base';
 
 use File::Spec;
 use Mojo::ByteStream 'b';
+use Mojo::Command;
 use Mojo::JSON;
 use MojoX::Types;
 
 __PACKAGE__->attr(default_format => 'html');
-__PACKAGE__->attr([qw/default_handler encoding/]);
+__PACKAGE__->attr([qw/default_handler default_template_class encoding/]);
 __PACKAGE__->attr(default_status => 200);
 __PACKAGE__->attr(handler        => sub { {} });
+__PACKAGE__->attr(helper         => sub { {} });
 __PACKAGE__->attr(layout_prefix  => 'layouts');
 __PACKAGE__->attr(root           => '/');
 __PACKAGE__->attr(types          => sub { MojoX::Types->new });
@@ -51,6 +53,31 @@ sub add_handler {
     $self->handler($handler);
 
     return $self;
+}
+
+sub add_helper {
+    my $self = shift;
+
+    # Merge
+    my $helper = ref $_[0] ? $_[0] : {@_};
+    $helper = {%{$self->helper}, %$helper};
+    $self->helper($helper);
+
+    return $self;
+}
+
+sub get_inline_template {
+    my ($self, $c, $template) = @_;
+
+    # Class
+    my $class =
+         $c->stash->{template_class}
+      || $ENV{MOJO_TEMPLATE_CLASS}
+      || $self->default_template_class
+      || 'main';
+
+    # Get
+    return Mojo::Command->new->get_data($template, $class);
 }
 
 # Bodies are for hookers and fat people.
@@ -237,6 +264,11 @@ L<MojoX::Types> implements the follwing attributes.
     my $default = $renderer->default_status;
     $renderer   = $renderer->default_status(404);
 
+=head2 C<default_template_class>
+
+    my $default = $renderer->default_template_class;
+    $renderer   = $renderer->default_template_class('main');
+
 =head2 C<encoding>
 
     my $encoding = $renderer->encoding;
@@ -246,6 +278,11 @@ L<MojoX::Types> implements the follwing attributes.
 
     my $handler = $renderer->handler;
     $renderer   = $renderer->handler({epl => sub { ... }});
+
+=head2 C<helper>
+
+    my $helper = $renderer->helper;
+    $renderer  = $renderer->helper({url_for => sub { ... }});
 
 =head2 C<layout_prefix>
 
@@ -274,6 +311,14 @@ follwing the ones.
 =head2 C<add_handler>
 
     $renderer = $renderer->add_handler(epl => sub { ... });
+
+=head2 C<add_helper>
+
+    $renderer = $renderer->add_helper(url_for => sub { ... });
+
+=head2 C<get_inline_template>
+
+    my $template = $renderer->get_inline_template($c, 'foo.html.ep');
 
 =head2 C<render>
 

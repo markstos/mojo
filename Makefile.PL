@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 use 5.008001;
 
@@ -66,6 +66,7 @@ WriteMakefile(
         'MIME::QuotedPrint'     => 0,
         'POSIX'                 => 0,
         'Scalar::Util'          => 0,
+        'Sys::Hostname'         => 0,
         'Test::Builder'         => 0,
         'Test::Harness'         => 0,
         'Test::More'            => 0,

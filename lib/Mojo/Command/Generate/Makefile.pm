@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package Mojo::Command::Generate::Makefile;
 
@@ -57,7 +57,7 @@ sub MY::postamble {
     qq/
 testcover :
 \t cover -delete && \\
-   HARNESS_PERL_SWITCHES=-MDevel::Cover \$(MAKE) test && \\
+   HARNESS_PERL_SWITCHES=-MDevel::Cover \$(MAKE) test && \\\
    cover
 /
 }

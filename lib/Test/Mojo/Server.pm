@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package Test::Mojo::Server;
 
@@ -79,7 +79,7 @@ sub start_daemon_ok {
     return Test::More::ok(0, $desc) unless $path;
 
     # Prepare command
-    $self->command(qq/$^X "$path" daemon --port $port/);
+    $self->command(qq/$^X "$path" daemon --listen http:*:$port/);
 
     return $self->start_server_ok($desc);
 }
@@ -98,7 +98,7 @@ sub start_daemon_prefork_ok {
     return Test::More::ok(0, $desc) unless $path;
 
     # Prepare command
-    $self->command(qq/$^X "$path" daemon_prefork --port $port/);
+    $self->command(qq/$^X "$path" daemon_prefork http:*:$port/);
 
     return $self->start_server_ok($desc);
 }
@@ -161,7 +161,7 @@ sub stop_server_ok {
 
     # Debug
     if (DEBUG) {
-        sysread $self->_server, my $buffer, 4096;
+        sysread $self->_server, my $buffer, 8192;
         warn "\nSERVER STDOUT: $buffer\n";
     }
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package MyTemplateExporter;
 
@@ -25,7 +25,7 @@ package main;
 use strict;
 use warnings;
 
-use Test::More tests => 84;
+use Test::More tests => 86;
 
 use File::Spec;
 use File::Temp;
@@ -434,7 +434,24 @@ $output = $mt->render(<<'EOF');
 $i x 4; }; %>\
 </html>\
 EOF
-is($output, "<html>2222</html>");
+is($output, '<html>2222</html>');
+
+# Different multiline expression
+$mt     = Mojo::Template->new;
+$output = $mt->render(<<'EOF');
+<%= do { my $i = '2';
+  $i x 4; };
+%>\
+EOF
+is($output, '2222');
+
+# Scoped scalar
+$mt     = Mojo::Template->new;
+$output = $mt->render(<<'EOF');
+% my $foo = 'bar';
+<%= $foo %>
+EOF
+is($output, "bar\n");
 
 # Different tags and line start
 $mt = Mojo::Template->new;

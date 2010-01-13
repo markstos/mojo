@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package SingleFileTestApp;
 
@@ -31,7 +31,7 @@ use base 'Mojolicious::Controller';
 
 sub bar {
     my $self = shift;
-    $self->res->headers->header('X-Bender', 'Kiss my shiny metal ass!');
+    $self->res->headers->header('X-Bender' => 'Bite my shiny metal ass!');
     $self->render_text($self->url_for);
 }
 

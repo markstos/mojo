@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package Mojo::Message::Request;
 
@@ -10,6 +10,7 @@ use base 'Mojo::Message';
 use Mojo::Cookie::Request;
 use Mojo::Parameters;
 
+__PACKAGE__->attr(env => sub { {} });
 __PACKAGE__->attr(method => 'GET');
 __PACKAGE__->attr(url => sub { Mojo::URL->new });
 
@@ -49,7 +50,7 @@ sub fix_headers {
 
     # Host header is required in HTTP 1.1 requests
     if ($self->at_least_version('1.1')) {
-        my $host = $self->url->host;
+        my $host = $self->url->ihost;
         my $port = $self->url->port;
         $host .= ":$port" if $port;
         $self->headers->host($host) unless $self->headers->host;
@@ -91,6 +92,21 @@ sub parse {
 
     # Fix things we only know after parsing headers
     unless ($self->is_state(qw/start headers/)) {
+
+        # Reverse proxy
+        my $forwarded = $self->headers->header('X-Forwarded-For');
+        if ($ENV{MOJO_REVERSE_PROXY} && $forwarded) {
+
+            # Host
+            $forwarded =~ /([^,\s]+)$/;
+            if (my $host = $1) {
+                $self->url->base->host($host);
+
+                # Port
+                my $port = $self->headers->header('X-Forwarded-Port');
+                $self->url->base->port($port);
+            }
+        }
 
         # Base URL
         $self->url->base->scheme('http') unless $self->url->base->scheme;
@@ -147,6 +163,9 @@ sub _build_start_line {
 sub _parse_env {
     my ($self, $env) = @_;
     $env ||= \%ENV;
+
+    # Make environment accessible
+    $self->env($env);
 
     # Headers
     for my $name (keys %{$env}) {
@@ -345,6 +364,11 @@ L<Mojo::Message::Request> is a container for HTTP requests.
 
 L<Mojo::Message::Request> inherits all attributes from L<Mojo::Message> and
 implements the following new ones.
+
+=head2 C<env>
+
+    my $env = $req->env;
+    $req    = $req->env({});
 
 =head2 C<method>
 

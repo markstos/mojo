@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package Mojo::URL;
 
@@ -38,28 +38,31 @@ sub authority {
         my $host     = $authority;
 
         # Userinfo
-        if ($authority =~ /^([^\@]*)\@(.*)$/) {
+        if ($authority =~ /^([^\@]+)\@(.+)$/) {
             $userinfo = $1;
             $host     = $2;
         }
 
         # Port
         my $port = undef;
-        if ($host =~ /^([^\:]*)\:(.*)$/) {
+        if ($host =~ /^(.+)\:(\d+)$/) {
             $host = $1;
             $port = $2;
         }
 
         $self->userinfo(
             $userinfo ? b($userinfo)->url_unescape->to_string : undef);
-        $self->host($host ? b($host)->url_unescape->to_string : undef);
+        $host
+          ? $self->ihost(b($host)->url_unescape->to_string)
+          : $self->host(undef);
         $self->port($port);
 
         return $self;
     }
 
-    # *( unreserved / pct-encoded / sub-delims )
-    my $host = b($self->host)->url_escape("$UNRESERVED$SUBDELIM");
+    # *( unreserved / pct-encoded / sub-delims ), extended with "[" and "]"
+    # to support IPv6
+    my $host = b($self->host)->url_escape("$UNRESERVED$SUBDELIM\[\]");
     my $port = $self->port;
 
     # *( unreserved / pct-encoded / sub-delims / ":" )
@@ -88,6 +91,36 @@ sub clone {
     $clone->base($self->base->clone) if $self->{base};
 
     return $clone;
+}
+
+sub ihost {
+    my ($self, $host) = @_;
+
+    # Set
+    if (defined $host) {
+
+        # Decode parts
+        my @decoded;
+        for my $part (split /\./, $_[1]) {
+            if ($part =~ /^xn--(.+)$/) {
+                $part = b($1)->punycode_decode->to_string;
+            }
+            push @decoded, $part;
+        }
+        $self->host(join '.', @decoded);
+
+        return $self;
+    }
+
+    # Encode parts
+    my @encoded;
+    for my $part (split /\./, $self->host || '') {
+        $part = 'xn--' . b($part)->punycode_encode->to_string
+          if $part =~ /[^\x00-\x7f]/;
+        push @encoded, $part;
+    }
+
+    return join '.', @encoded;
 }
 
 sub is_abs {
@@ -313,6 +346,11 @@ following new ones.
 =head2 C<clone>
 
     my $url2 = $url->clone;
+
+=head2 C<ihost>
+
+    my $ihost = $url->ihost;
+    $url      = $url->ihost('xn--bcher-kva.ch');
 
 =head2 C<is_abs>
 

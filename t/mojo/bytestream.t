@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 use strict;
 use warnings;
@@ -10,7 +10,7 @@ use utf8;
 # Homer, we're going to ask you a few simple yes or no questions.
 # Do you understand?
 # Yes. *lie dectector blows up*
-use Test::More tests => 33;
+use Test::More tests => 37;
 
 use_ok('Mojo::ByteStream', 'b');
 
@@ -19,12 +19,16 @@ my $stream = b('foo_bar_baz');
 is($stream->camelize, 'FooBarBaz');
 $stream = b('FooBarBaz');
 is($stream->camelize, 'Foobarbaz');
+$stream = b('foo_b_b');
+is($stream->camelize, 'FooBB');
 
 # decamelize
 $stream = b('FooBarBaz');
 is($stream->decamelize, 'foo_bar_baz');
 $stream = b('foo_bar_baz');
 is($stream->decamelize, 'foo_bar_baz');
+$stream = b('FooBB');
+is($stream->decamelize, 'foo_b_b');
 
 # b64_encode
 $stream = b('foobar$%^&3217');
@@ -135,4 +139,12 @@ is("$stream", 'привет&lt;foo&gt;');
 
 # Decode invalid utf8
 $stream = b("\x{1000}")->decode('UTF-8');
-is("$stream", '');
+is($stream->to_string, undef);
+
+# punycode_encode
+$stream = b('bücher')->punycode_encode;
+is("$stream", 'bcher-kva');
+
+# punycode_decode
+$stream = b('bcher-kva')->punycode_decode;
+is("$stream", 'bücher');

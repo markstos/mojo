@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package Mojo::Transaction::Single;
 
@@ -88,15 +88,19 @@ sub client_info {
     my $self = shift;
 
     my $scheme = $self->req->url->scheme;
-    my $host   = $self->req->url->host;
-    my $port   = $self->req->url->port || 80;
+    my $host   = $self->req->url->ihost;
+    my $port   = $self->req->url->port;
 
     # Proxy
     if (my $proxy = $self->req->proxy) {
         $scheme = $proxy->scheme;
-        $host   = $proxy->host;
-        $port   = $proxy->port || 80;
+        $host   = $proxy->ihost;
+        $port   = $proxy->port;
     }
+
+    # Default port
+    $scheme ||= 'http';
+    $port ||= $scheme eq 'https' ? 443 : 80;
 
     return {host => $host, port => $port, scheme => $scheme};
 }

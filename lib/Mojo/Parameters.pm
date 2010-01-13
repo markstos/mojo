@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2009, Sebastian Riedel.
+# Copyright (C) 2008-2010, Sebastian Riedel.
 
 package Mojo::Parameters;
 
@@ -90,12 +90,22 @@ sub parse {
     # Clear
     $self->params([]);
 
+    # Charset
+    my $charset = $self->charset;
+
     # Detect query string without key/value pairs
     if ($string !~ /\=/) {
         $string =~ s/\+/\ /g;
 
         # Unescape
-        $string = b($string)->url_unescape->decode($self->charset)->to_string;
+        $string = b($string)->url_unescape->to_string;
+
+        # Try to decode
+        if ($charset) {
+            my $backup = $string;
+            $string = b($string)->decode($charset)->to_string;
+            $string = $backup unless defined $string;
+        }
 
         $self->params([$string, undef]);
         return $self;
@@ -117,8 +127,18 @@ sub parse {
         $value =~ s/\+/\ /g;
 
         # Unescape
-        $name  = b($name)->url_unescape->decode($self->charset)->to_string;
-        $value = b($value)->url_unescape->decode($self->charset)->to_string;
+        $name  = b($name)->url_unescape->to_string;
+        $value = b($value)->url_unescape->to_string;
+
+        # Try to decode
+        if ($charset) {
+            my $nbackup = $name;
+            my $vbackup = $value;
+            $name  = b($name)->decode($charset)->to_string;
+            $value = b($value)->decode($charset)->to_string;
+            $name  = $nbackup unless defined $name;
+            $value = $vbackup unless defined $value;
+        }
 
         push @{$self->params}, $name, $value;
     }
