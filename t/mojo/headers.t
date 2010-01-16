@@ -79,3 +79,11 @@ $headers = Mojo::Headers->new;
 $headers->header("X-T\@est|>\r\ning", "s1n\000gl\1773 \r\n\r\n\006l1n3");
 $string = $headers->header('X-Testing');
 is($string, "s1ngl3 l1n3");
+
+
+# A valid multi-line header comes through unmodified
+# Also, test "to_string"
+$headers = Mojo::Headers->new;
+my @headers = $headers->header('X-Test', "a\x0d\x0a b");
+is($headers->to_string, "X-Test: a\x0d\x0a b", "A valid multi-line header comes through unmodified");
+
