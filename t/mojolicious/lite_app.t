@@ -7,7 +7,7 @@ use warnings;
 
 use utf8;
 
-use Test::More tests => 273;
+use Test::More tests => 294;
 
 # Wait you're the only friend I have...
 # You really want a robot for a friend?
@@ -187,6 +187,9 @@ get '/koi8-r' => sub {
     shift->render('encoding', format => 'koi8-r', handler => 'ep');
     app->renderer->encoding(undef);
 };
+
+# GET /hello3.txt
+get '/hello3.txt' => sub { shift->render_static('hello2.txt') };
 
 ladder sub {
     my $self = shift;
@@ -539,12 +542,32 @@ $t->get_ok('/hello.txt', {'Range' => 'bytes=2-8'})->status_is(206)
   ->header_is('Accept-Ranges' => 'bytes')->header_is('Content-Length' => 7)
   ->content_is('llo Moj');
 
-# GET /hello.txt (partial static file)
+# GET /hello.txt (partial static file, starting at first byte)
 $t->get_ok('/hello.txt', {'Range' => 'bytes=0-8'})->status_is(206)
   ->header_is(Server          => 'Mojo (Perl)')
   ->header_is('X-Powered-By'  => 'Mojolicious (Perl)')
   ->header_is('Accept-Ranges' => 'bytes')->header_is('Content-Length' => 9)
   ->content_is('Hello Moj');
+
+# GET /hello.txt (partial static file, first byte)
+$t->get_ok('/hello.txt', {'Range' => 'bytes=0-0'})->status_is(206)
+  ->header_is(Server          => 'Mojo (Perl)')
+  ->header_is('X-Powered-By'  => 'Mojolicious (Perl)')
+  ->header_is('Accept-Ranges' => 'bytes')->header_is('Content-Length' => 1)
+  ->content_is('H');
+
+# GET /hello3.txt (render_static and single byte file)
+$t->get_ok('/hello3.txt')->status_is(200)->header_is(Server => 'Mojo (Perl)')
+  ->header_is('X-Powered-By' => 'Mojolicious (Perl)')
+  ->header_is('Accept-Ranges' => 'bytes')->header_is('Content-Length' => 1)
+  ->content_is('X');
+
+# GET /hello3.txt (render_static and partial single byte file)
+$t->get_ok('/hello3.txt', {'Range' => 'bytes=0-0'})->status_is(206)
+  ->header_is(Server          => 'Mojo (Perl)')
+  ->header_is('X-Powered-By'  => 'Mojolicious (Perl)')
+  ->header_is('Accept-Ranges' => 'bytes')->header_is('Content-Length' => 1)
+  ->content_is('X');
 
 __DATA__
 @@ template.txt.epl

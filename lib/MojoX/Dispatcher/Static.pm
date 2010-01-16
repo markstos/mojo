@@ -30,7 +30,7 @@ sub dispatch {
     }
 
     # Parts
-    my @parts = @{Mojo::Path->parse($path)->parts};
+    my @parts = @{Mojo::Path->new->parse($path)->parts};
 
     # Shortcut
     return 1 unless @parts;
@@ -87,12 +87,14 @@ sub serve {
             $res->code(200);
 
             # Partial content
-            my $size = $stat->size;
-            my ($start, $end) = (0, $size - 1 || 0);
+            my $size  = $stat->size;
+            my $start = 0;
+            my $end   = $size - 1 >= 0 ? $size - 1 : 0;
+
             if (my $range = $req->headers->header('Range')) {
                 if ($range =~ m/^bytes=(\d+)\-(\d+)?/ && $1 <= $end) {
                     $start = $1;
-                    $end = $2 if $2 && $2 <= $end;
+                    $end = $2 if defined $2 && $2 <= $end;
                     $res->code(206);
                     $res->headers->header(
                         'Content-Length' => $end - $start + 1);

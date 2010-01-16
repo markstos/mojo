@@ -62,11 +62,11 @@ sub load_plugin {
         if (ref $e) { die $e }
         next if $e;
 
-        # Register
-        my $plugin = $module->new->register($app, $args);
+        # Module is a plugin?
+        next unless $module->can('new') && $module->can('register');
 
-        # Done
-        return $self;
+        # Register
+        return $module->new->register($app, $args);
     }
 
     # Not found

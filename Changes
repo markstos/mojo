@@ -2,6 +2,7 @@ This file documents the revision history for Perl extension Mojo.
 
 0.999915 2010-01-10 00:00:00
         - MOJO_RELOAD=1 now works with Mojolicious::Lite, have fun!
+        - Allow reloading to be triggered once by a USR1 signal.
         - Added --reload flag to all server bindings as an alternative to
           MOJO_RELOAD=1.
         - Added IPv6 support.
@@ -33,10 +34,15 @@ This file documents the revision history for Perl extension Mojo.
         - Added the ability to run multiple parallel ioloops that block each
           other.
         - Added default_template_class attribute to MojoX::Renderer.
+        - Added render_static method to Mojolicious::Controller.
+        - Added support for embedded Mojolicious applications.
+        - Added json_config plugin to Mojolicious. (vti)
         - Made all Mojolicious after_* plugin hooks run in reverse order.
         - Made param decoding more defensive and allow malformed data to pass
           through for debugging.
         - Reduced Mojolicious log output outside of development mode.
+        - Fixed double encoding of JSON data with charset plugin.
+          (yuki-kimoto)
         - Fixed prefork daemon signal handling.
         - Fixed backslash encoding bug in Mojo::JSON.
         - Fixed memory leaks in Mojolicious plugins. (sharifulin)
@@ -48,6 +54,8 @@ This file documents the revision history for Perl extension Mojo.
         - Fixed format detection bug. (marcus)
         - Fixed named url_for and added tests. (marcus)
         - Fixed decamelize of multiple uppercase characters.
+        - Fixed plugins and commands to work with multiple namespaces and
+          reloading.
 
 0.999914 2009-11-24 00:00:00
         - Added the Mojolicious plugin system.
