@@ -89,13 +89,14 @@ my (%ORDERED_HEADERS, %NORMALCASE_HEADERS);
     }
 }
 
+my $illegal_chars = qr/[[:cntrl:]\(\|\)\<\>\@\,\;\:\\\"\/\[\]\?\=\{\}\s]/o;
 sub add {
     my $self = shift;
     my $name = shift;
 
     # Filter illegal characters from header name
     # (1*<any CHAR except CTLs or separators>)
-    $name =~ s/[[:cntrl:]\(\|\)\<\>\@\,\;\:\\\"\/\[\]\?\=\{\}\s]//g;
+    $name =~ s/$illegal_chars//g;
 
     # Make sure we have a normal case entry for name
     my $lcname = lc $name;
@@ -113,7 +114,7 @@ sub add {
 
             # Filter control characters
             $value = '' unless defined $value;
-            $value =~ s/[[:cntrl:]]//g;
+            $value =~ s/[[:cntrl:]]//go;
 
             push @{$values[-1]}, $value;
         }
@@ -249,7 +250,7 @@ sub parse {
         last unless defined $line;
 
         # New header
-        if ($line =~ /^(\S+)\s*:\s*(.*)/) { push @{$self->_buffer}, $1, $2 }
+        if ($line =~ /^(\S+)\s*:\s*(.*)/o) { push @{$self->_buffer}, $1, $2 }
 
         # Multiline
         elsif (@{$self->_buffer} && $line =~ s/^\s+//) {
